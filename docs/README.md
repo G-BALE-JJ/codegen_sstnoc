@@ -15,3 +15,7 @@
 - 记录 `c` backend 上如何识别 SST 标记。
 - 记录 RISC-V 自定义指令在 C 源码中的承载形式。
 - 记录后续如何与 `TileOPs` 上层用例联调。
+
+## 当前文档
+
+- `sst-codegen-first-design.md`：首版 SST codegen 的技术设计与实施顺序。

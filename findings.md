@@ -49,6 +49,7 @@
 
 - `/data4/jjgong/tilelang`
 - `/data4/jjgong/TileOPs`
+- `/data4/jjgong/codegen_sstnoc/docs/sst-codegen-first-design.md`
 
 ## 可视化/浏览器结论
 
