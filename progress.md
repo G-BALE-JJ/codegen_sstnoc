@@ -35,6 +35,7 @@
   - 将 `TileOPs` 中 GEMM 相关文件记为后续联调参考，而不是首版实现改动点。
   - 补充了首版范围、当前约定和后续联调方向到项目文档。
   - 输出了首版 SST codegen 技术设计文档，明确 target 标准化、C backend 落点和测试策略。
+  - 生成了一页中文技术路线汇报 PPT，并保留可编辑源文件。
 - 已创建/修改的文件：
   - `task_plan.md`
   - `findings.md`
@@ -42,6 +43,10 @@
   - `README.md`
   - `docs/README.md`
   - `docs/sst-codegen-first-design.md`
+  - `docs/sst-codegen-tech-route.fodp`
+  - `docs/sst-codegen-tech-route.pptx`
+  - `scripts/build_sst_pptx.py`
+  - `scripts/export_sst_ppt.sh`
 
 ## 测试结果
 
@@ -53,6 +58,7 @@
 | C 后端入口确认 | `tilelang` 源码检索 | 存在 C backend 路径 | 已确认 | ✓ |
 | 项目文档补全 | 新增首版范围与约定 | 文档同步最新上下文 | 已完成 | ✓ |
 | 技术设计输出 | 首版实现方案文档 | 形成可执行设计 | 已完成 | ✓ |
+| 组会汇报页 | 一页技术路线 PPT | 可打开的 `.pptx` 文件 | 已生成 | ✓ |
 
 ## 错误日志
 

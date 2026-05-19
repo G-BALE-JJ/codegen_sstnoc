@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+ xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+ xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+ xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+ office:version="1.3"
+ office:mimetype="application/vnd.oasis.opendocument.presentation">
+ <office:meta/>
+ <office:settings/>
+ <office:scripts/>
+ <office:automatic-styles>
+  <style:style style:name="dp1" style:family="drawing-page">
+   <style:drawing-page-properties presentation:background-visible="true" draw:fill="solid" draw:fill-color="#F7F1E8"/>
+  </style:style>
+  <style:style style:name="grTitle" style:family="graphic">
+   <style:graphic-properties draw:fill="none" draw:stroke="none"/>
+   <style:paragraph-properties fo:text-align="start"/>
+   <style:text-properties fo:color="#1B1B1B" fo:font-size="30pt" style:font-size-asian="30pt" fo:font-weight="bold" style:font-weight-asian="bold"/>
+  </style:style>
+  <style:style style:name="grSubtitle" style:family="graphic">
+   <style:graphic-properties draw:fill="none" draw:stroke="none"/>
+   <style:paragraph-properties fo:text-align="start"/>
+   <style:text-properties fo:color="#4F5B66" fo:font-size="12pt" style:font-size-asian="12pt"/>
+  </style:style>
+  <style:style style:name="grSection" style:family="graphic">
+   <style:graphic-properties draw:fill="none" draw:stroke="none"/>
+   <style:paragraph-properties fo:text-align="start"/>
+   <style:text-properties fo:color="#A24A2A" fo:font-size="15pt" style:font-size-asian="15pt" fo:font-weight="bold" style:font-weight-asian="bold"/>
+  </style:style>
+  <style:style style:name="grBody" style:family="graphic">
+   <style:graphic-properties draw:fill="none" draw:stroke="none"/>
+   <style:paragraph-properties fo:text-align="start"/>
+   <style:text-properties fo:color="#222222" fo:font-size="13pt" style:font-size-asian="13pt"/>
+  </style:style>
+  <style:style style:name="boxMain" style:family="graphic">
+   <style:graphic-properties draw:stroke="solid" svg:stroke-width="0.03cm" svg:stroke-color="#B9A48B" draw:fill="solid" draw:fill-color="#FFFDF8" draw:corner-radius="0.15cm" fo:padding="0.18cm"/>
+  </style:style>
+  <style:style style:name="boxAccent" style:family="graphic">
+   <style:graphic-properties draw:stroke="solid" svg:stroke-width="0.03cm" svg:stroke-color="#C76B3A" draw:fill="solid" draw:fill-color="#FFF2E8" draw:corner-radius="0.15cm" fo:padding="0.18cm"/>
+  </style:style>
+  <style:style style:name="arrowLine" style:family="graphic">
+   <style:graphic-properties draw:stroke="solid" svg:stroke-width="0.08cm" svg:stroke-color="#C76B3A" draw:marker-end-width="0.4cm"/>
+  </style:style>
+ </office:automatic-styles>
+ <office:master-styles>
+  <style:master-page style:name="Default" presentation:page-layout-name="AL1T28"/>
+ </office:master-styles>
+ <office:body>
+  <office:presentation>
+   <draw:page draw:name="page1" draw:style-name="dp1" draw:master-page-name="Default" presentation:presentation-page-layout-name="AL1T28">
+    <draw:frame presentation:style-name="grTitle" draw:style-name="grTitle" draw:text-style-name="grTitle" svg:x="1.1cm" svg:y="0.8cm" svg:width="23.8cm" svg:height="1.6cm" presentation:class="title">
+     <draw:text-box>
+      <text:p>SST 首版 Codegen 技术路线</text:p>
+     </draw:text-box>
+    </draw:frame>
+    <draw:frame presentation:style-name="grSubtitle" draw:style-name="grSubtitle" draw:text-style-name="grSubtitle" svg:x="1.15cm" svg:y="2.0cm" svg:width="23.2cm" svg:height="0.9cm" presentation:class="subtitle">
+     <draw:text-box>
+      <text:p>目标：仅修改 tilelang，在识别 SST 后端目标后生成包含 RISC-V 自定义指令痕迹的 C 代码</text:p>
+     </draw:text-box>
+    </draw:frame>
+
+    <draw:custom-shape draw:style-name="boxMain" svg:x="1.0cm" svg:y="3.0cm" svg:width="6.0cm" svg:height="8.8cm">
+     <text:p text:style-name="grSection">1. 输入与目标标准化</text:p>
+     <text:p text:style-name="grBody">• 用户侧 target 采用 “c + SST 标记”</text:p>
+     <text:p text:style-name="grBody">• 不引入新的 target kind</text:p>
+     <text:p text:style-name="grBody">• 在 `tilelang/utils/target.py` 中统一标准化</text:p>
+     <text:p text:style-name="grBody">• 新增 `normalize_sst_target()` / `is_sst_target()`</text:p>
+     <text:p text:style-name="grBody">• 保持 `target.kind.name == "c"`</text:p>
+    </draw:custom-shape>
+
+    <draw:custom-shape draw:style-name="boxMain" svg:x="7.7cm" svg:y="3.0cm" svg:width="8.0cm" svg:height="8.8cm">
+     <text:p text:style-name="grSection">2. 复用 tilelang 现有编译链</text:p>
+     <text:p text:style-name="grBody">• `lower.py` 继续走现有 C backend</text:p>
+     <text:p text:style-name="grBody">• 设备侧入口：`target.build.tilelang_c`</text:p>
+     <text:p text:style-name="grBody">• 核心落点：`CodeGenTileLangC`</text:p>
+     <text:p text:style-name="grBody">• 关键改动位置：`VisitExpr_(CallNode)`</text:p>
+     <text:p text:style-name="grBody">• 优先识别 `call_extern("tl.sst.xxx", ...)` 命名空间</text:p>
+     <text:p text:style-name="grBody">• 目标：最小化对现有 lowering 主链的侵入</text:p>
+    </draw:custom-shape>
+
+    <draw:custom-shape draw:style-name="boxAccent" svg:x="16.4cm" svg:y="3.0cm" svg:width="8.2cm" svg:height="8.8cm">
+     <text:p text:style-name="grSection">3. SST 指令承载与验证</text:p>
+     <text:p text:style-name="grBody">• 首版不直接生成复杂 inline asm</text:p>
+     <text:p text:style-name="grBody">• 先输出宏/内联函数形式的 C 代码</text:p>
+     <text:p text:style-name="grBody">• 示例：`SST_RISCV_CUSTOM_OP(...)`</text:p>
+     <text:p text:style-name="grBody">• 测试重点：校验生成源码字符串</text:p>
+     <text:p text:style-name="grBody">• `TileOPs` 当前只作为 GEMM 上层联调参考</text:p>
+     <text:p text:style-name="grBody">• 第二阶段再推进真实执行链路</text:p>
+    </draw:custom-shape>
+
+    <draw:line draw:style-name="arrowLine" svg:x1="7.05cm" svg:y1="7.35cm" svg:x2="7.6cm" svg:y2="7.35cm"/>
+    <draw:line draw:style-name="arrowLine" svg:x1="15.75cm" svg:y1="7.35cm" svg:x2="16.3cm" svg:y2="7.35cm"/>
+
+    <draw:frame presentation:style-name="grBody" draw:style-name="grBody" draw:text-style-name="grBody" svg:x="1.2cm" svg:y="12.3cm" svg:width="23.0cm" svg:height="1.0cm" presentation:class="outline">
+     <draw:text-box>
+      <text:p>实施顺序：target 标准化 → SST 判断辅助函数 → C backend 分支输出 → 最小 codegen 字符串测试 → 后续接入 TileOPs GEMM 用例联调</text:p>
+     </draw:text-box>
+    </draw:frame>
+   </draw:page>
+  </office:presentation>
+ </office:body>
+</office:document>
