@@ -22,9 +22,9 @@ CIM-TileIR JSON
 riscv_cim_mesh
 ```
 
-但第一阶段不建议直接新增真正的 TVM/TileLang `TargetKind`。更稳妥的实现策略是：先沿用现有 `c` target，在 target 上增加 `cim` / `sst` / `noc` 之类的 key 或 tag 进行分流。待 `CIM-TileIR` schema、GEMM 提取流程和抽象 simulator 稳定后，再把用户接口包装为 `riscv_cim_mesh`。
+但第一阶段不建议直接新增真正的 TVM/TileLang `TargetKind`。更稳妥的实现策略是：先沿用现有 `c` target，在 target 上增加 `cim` / `sst` / `noc` 之类的 key 或 tag 进行分流。待 `CIM-TileIR` schema、GEMM 提取流程、architecture spec 和架构感知执行模型稳定后，再把用户接口包装为 `riscv_cim_mesh`。
 
-`CIM-TileIR` 是本项目定义的架构相关中间表示，可以保存为 JSON，也可以在后续实现中用 Python/C++ 对象表示。它不是某个特定文件，而是 TileLang 与未来 simulator、runtime、ELF codegen 之间的接口契约。
+`CIM-TileIR` 是本项目定义的架构相关中间表示，可以保存为 JSON，也可以在后续实现中用 Python/C++ 对象表示。它不是某个特定文件，而是 TileLang 与未来 architecture-aware planner、simulator、runtime、ELF codegen 之间的接口契约。
 
 ## 2. 当前资产与约束
 
@@ -74,18 +74,20 @@ TileLang 作为前端，负责表达和承载以下信息：
 - 将 `T.Pipelined` 的 `num_stages=1/2` 提取为 pipeline metadata。
 - 生成 `CIM-TileIR JSON`，作为后续 abstract sim 和 ELF codegen 的共同输入。
 
-### 3.3 抽象 simulator 侧负责
+### 3.3 抽象 event expander / 后续 simulator 侧负责
 
-当前尚无现成 simulator。MVP 建议先实现一个轻量 JSON interpreter / event planner，而不是完整 cycle-accurate simulator：
+当前尚无现成 simulator，也尚无真实 mesh architecture spec。MVP 中已经实现的 `build_event_plan` 更准确地说是 abstract event expander / IR sanity consumer，而不是完整 cycle-accurate simulator：
 
 - 读取 `CIM-TileIR JSON`。
 - 根据 mesh 配置创建抽象 core 列表。
 - 根据 tile mapping 给每个 core 分配 tile task。
-- 展开 load / store / cim_gemm / barrier 等抽象事件。
+- 展开 load / store / cim_gemm 等抽象事件。
 - 输出 per-core event list。
-- 统计 DMA bytes、store bytes、CIM op count、粗略 estimated cycles、core utilization 等指标。
+- 统计 DMA bytes、store bytes、CIM op count、MACs、core utilization 等指标。
 
-该阶段用于验证 IR 结构、tile mapping 和统计模型，不代表真实硬件执行。
+该阶段用于验证 IR 结构和 tile mapping 是否能被下游消费，不代表真实硬件执行。当前 `estimated_cycles` 应保持为 0 或缺省值，直到 architecture spec 明确给出 DMA、CIM primitive、NoC、synchronization 等参数。
+
+后续真正的 architecture-aware planner / simulator 需要先定义 `CIMArchitectureSpec`，至少包含 mesh/core、local SRAM、accumulator、DMA、CIM primitive、NoC、barrier、mapping/dataflow 和 cycle model。
 
 ### 3.4 OS/ELF 侧负责
 
@@ -252,9 +254,9 @@ tlcim.export_json(ir, "gemm.cimtile.json")
 
 内部可以先把 `kind="riscv_cim_mesh"` 转成 `Target({"kind": "c", "keys": ["cim"]})` 或等价标记，以复用 TileLang 现有 `c` backend / CPU-style lowering 能力。该阶段目标是将现有 parser 思路升级为 TIR visitor/pass，即从 TileLang/TIR 节点中提取语义，而不是解析 Python 源码文本。
 
-### 5.3 第 2 阶段：CIM 架构规格草案
+### 5.3 第 2 阶段：CIM architecture spec 草案
 
-在实现 abstract simulator 前，需要先定义最小架构规格：
+在将当前 event expander 升级为 architecture-aware planner 前，需要先定义最小架构规格：
 
 - mesh 宽高。
 - `core_id` 与 `(core_x, core_y)` 的映射。
@@ -266,11 +268,13 @@ tlcim.export_json(ir, "gemm.cimtile.json")
 - barrier 粒度；第一阶段可先不支持。
 - cycle model 是常数估算、公式估算还是表驱动估算。
 
-没有这份规格，`CIM-TileIR` 很容易变成无法执行的描述文件。
+没有这份规格，event planner 只能输出事件骨架，不能输出可信的 legality / cycle / performance 结论。当前阶段汇总和 architecture spec 字段清单见 `docs/cim-tileir-prototype-summary.md`。
 
-### 5.4 第 3 阶段：abstract sim / event planner
+### 5.4 第 3 阶段：abstract event expander / architecture-aware planner
 
-sim mode 初期不是完整 simulator，而是 `CIM-TileIR JSON` 的抽象解释器：
+sim mode 初期不是完整 simulator，而是两层逐步推进。
+
+第一层是当前已完成的 event expander：
 
 ```text
 CIM-TileIR JSON
@@ -284,7 +288,21 @@ per-core event list
 粗略统计指标
 ```
 
-建议新增：
+该层只输出事件骨架和静态统计，不代表真实执行。
+
+第二层需要在 architecture spec 之后再做：
+
+```text
+CIM-TileIR JSON + CIMArchitectureSpec
+    ↓
+legality check
+    ↓
+architecture-aware event plan
+    ↓
+optional rough cycle estimate
+```
+
+建议后续新增：
 
 - `CimTileIrLoader`
 - `KernelDesc`
@@ -293,6 +311,8 @@ per-core event list
 - `MeshMapper`
 - `BufferPlanner`
 - `EventPlanner`
+- `CIMArchitectureSpec`
+- `ArchitectureChecker`
 
 执行流程：
 
@@ -300,6 +320,10 @@ per-core event list
 读取 JSON
     ↓
 构建 kernel/tensor/tile/mapping 描述
+    ↓
+读取或选择 architecture spec
+    ↓
+校验 dtype / tile shape / local SRAM / accumulator / DMA 约束
     ↓
 按 core_id 分配 tile task
     ↓
@@ -462,10 +486,12 @@ abstract sim / future RISC-V ELF
 ### 8.2 中期产出
 
 - 抽象 CIM 架构规格。
-- abstract sim / event planner。
+- abstract event expander。
+- architecture-aware planner。
 - per-core task graph。
 - load/store/cim_gemm event list。
-- 粗略 DMA bytes、CIM op count、estimated cycles、core utilization 统计。
+- 粗略 DMA bytes、CIM op count、MACs、core utilization 统计。
+- 在 architecture spec 明确后，再输出 estimated cycles。
 
 ### 8.3 长期产出
 
@@ -484,6 +510,6 @@ abstract sim / future RISC-V ELF
 
 实现上，第一阶段不建议直接新增真正的 `riscv_cim_mesh` target kind，而是先复用 TileLang 现有 `c` target 路径，通过 `c + cim key/tag` 做内部标记。对外可以保留 `riscv_cim_mesh` 的包装接口，内部先转成兼容现有 C/CPU-style lowering 的形式，降低改动风险。
 
-中期再实现一个抽象 simulator / event planner，读取 `CIM-TileIR JSON` 后生成 per-core task 和 event list，输出 DMA bytes、CIM op count、estimated cycles、core utilization 等粗略统计。长期才进入 C++ SPMD、runtime ABI、RISC-V ELF 和 OS loader 闭环。
+中期先实现一个 abstract event expander，读取 `CIM-TileIR JSON` 后生成 per-core task 和 event list，输出 DMA bytes、CIM op count、MACs、core utilization 等静态统计。它不代表真实 simulator，也不输出可信硬件周期。之后需要先定义 `CIMArchitectureSpec`，再升级为 architecture-aware planner，并在架构参数明确后才输出 estimated cycles。长期才进入 C++ SPMD、runtime ABI、RISC-V ELF 和 OS loader 闭环。
 
 这样项目会从现有资产出发，先证明 TileLang GEMM 到 CIM-TileIR 的编译器侧路径可行，再逐步补齐 CIM 架构、模拟器和执行链路。

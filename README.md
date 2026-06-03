@@ -29,6 +29,7 @@
 - `tilelang_cim/`：CIM-TileIR 编译器侧原型包。
 - `examples/gemm_ir.py`：生成静态 GEMM 的 `CIM-TileIR JSON` 示例。
 - `examples/extract_tilelang_gemm.py`：从窄模板 TileLang GEMM 源码提取 `CIM-TileIR JSON` 的示例。
+- `examples/plan_events.py`：将 `CIM-TileIR JSON` 展开为 abstract event plan 的示例。
 - `tests/`：CIM-TileIR 原型的 pytest 测试。
 
 ## 工作原则
@@ -89,7 +90,9 @@ python examples/plan_events.py \
   --output tilelang_gemm.eventplan.json
 ```
 
-第一版 event planner 只做抽象事件展开和粗略统计。输出包括 per-output-tile task、core 映射、`clear_acc`、`dma_load`、`cim_gemm`、`dma_store` 事件，以及 `dma_load_bytes`、`dma_store_bytes`、`cim_gemm_ops`、`macs`、`core_utilization` 等统计；`estimated_cycles` 暂固定为 0，不代表真实硬件周期。
+第一版 event planner 更准确地说是 abstract event expander / IR sanity consumer，只做抽象事件展开和粗略统计。输出包括 per-output-tile task、core 映射、`clear_acc`、`dma_load`、`cim_gemm`、`dma_store` 事件，以及 `dma_load_bytes`、`dma_store_bytes`、`cim_gemm_ops`、`macs`、`core_utilization` 等统计；`estimated_cycles` 暂固定为 0，不代表真实硬件周期。
+
+当前 CIM 原型阶段的完整整理见 `docs/cim-tileir-prototype-summary.md`。该文档同时列出了后续进入 architecture-aware planner 前需要补齐的 architecture spec 信息，包括 mesh/core、local SRAM、accumulator、DMA、CIM primitive、NoC、synchronization、mapping/dataflow 和 cycle model。
 
 ## 推荐流程
 

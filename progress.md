@@ -172,3 +172,30 @@
   - `README.md`
   - `task_plan.md`
   - `progress.md`
+
+### 原型整理与 architecture spec 边界补充
+- **状态：**已完成文档整理
+- 背景：
+  - 用户指出当前项目并不知道真实 CIM mesh 结构，因此 event planner 不能被当作真实 simulator。
+- 已执行的操作：
+  - 将当前 `build_event_plan` 的定位明确为 abstract event expander / IR sanity consumer。
+  - 明确当前 event plan 只验证 `CIM-TileIR` 能否被下游消费，并输出事件骨架和静态统计。
+  - 明确 `estimated_cycles=0` 不代表真实硬件周期。
+  - 新增 `docs/cim-tileir-prototype-summary.md`，汇总当前已完成能力、可运行链路、边界和后续 architecture spec 需求。
+  - 在 `README.md`、`task_plan.md`、`findings.md` 和 `tilelang_riscv_cim_backend_plan.md` 中同步 architecture spec 前置要求。
+- 后续需要补齐的 architecture spec 信息：
+  - mesh/core 拓扑和 core id 映射。
+  - local SRAM 和 accumulator 容量。
+  - DMA 粒度、带宽、启动延迟和 overlap 能力。
+  - CIM primitive 支持的 dtype、tile shape、latency/throughput。
+  - NoC topology、routing、带宽、hop latency 和通信能力。
+  - synchronization / barrier 粒度和延迟。
+  - mapping/dataflow 策略。
+  - cycle model 类型和公式。
+- 已创建/修改的文件：
+  - `docs/cim-tileir-prototype-summary.md`
+  - `README.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `tilelang_riscv_cim_backend_plan.md`
+  - `progress.md`

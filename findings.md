@@ -21,6 +21,8 @@
 - RISC-V CIM 2D-mesh 方向仍然可行，但近期应收敛为 `TileLang GEMM -> CIM-TileIR JSON` 的编译器侧原型，而不是直接承诺 sim/ELF 可执行闭环。
 - TileLang 内部保留 `tl.tileop.copy`、`tl.tileop.gemm` 等 high-level tile op 语义，适合在 `LowerTileOp` 之前通过 TIR visitor/pass 提取。
 - CIM 方案第一阶段建议继续复用 `c` target + key/tag 的目标标记策略，待 IR schema、extractor 和 abstract event planner 稳定后再包装 `riscv_cim_mesh` 用户接口。
+- 当前 `build_event_plan` 更准确的定位是 abstract event expander / IR sanity consumer。它可以展开 per-output-tile task 和 load/compute/store 事件，但由于缺少真实 architecture spec，不能作为性能模拟器或真实 mesh 执行模型。
+- 后续若要让 planner 具备架构意义，需要先定义 `CIMArchitectureSpec`，至少覆盖 mesh/core、local SRAM、accumulator、DMA、CIM primitive、NoC、synchronization、mapping/dataflow 和 cycle model。
 
 ## 技术决策
 
@@ -35,9 +37,10 @@
 | SST target 采用“`c` + SST 标记”而非新 kind | 现有逻辑大量依赖 `target.kind.name == "c"`，复用旧通路更稳 |
 | `TileOPs` 中 GEMM 用例作为后续联调参考 | 便于后续从真实上层调用验证 codegen 行为 |
 | CIM 近期目标设为 `CIM-TileIR JSON` 生成 | 当前没有 CIM 执行侧源码，先完成编译器侧可检查闭环更稳 |
-| CIM sim mode 先定义为 abstract event planner | 在没有真实 simulator 的情况下，先输出 per-core event list 和粗略统计 |
+| CIM sim mode 先定义为 abstract event expander | 在没有真实 simulator 和 architecture spec 的情况下，先输出事件骨架和粗略统计，不输出真实性能结论 |
 | CIM ELF mode 归入长期目标 | runtime ABI、RISC-V toolchain、OS loader 均需要后续建设 |
 | CIM target 第一阶段不新增真正 target kind | 复用 `c` target + key/tag 可以降低主链路改造风险 |
+| 下一阶段优先定义 `CIMArchitectureSpec` | 没有架构参数时继续扩展 cycle model 或 mapping policy 容易产生误导 |
 
 ## 遇到的问题
 
@@ -55,7 +58,9 @@
 - 后续联调优先选 `TileOPs` 中哪个 GEMM/算子样例作为 smoke test。
 - CIM-TileIR extractor 先做 out-of-tree 包，还是直接注册为 TileLang pass。
 - CIM 内部 target 标记采用 `c -keys=cim`、`c -keys=sst` 还是复用 `noc` key。
-- abstract event planner 的统计模型第一版采用常数估算、公式估算还是表驱动估算。
+- `CIMArchitectureSpec` 第一版使用 JSON/YAML 还是 Python dataclass。
+- 真实 mesh/core/local SRAM/accumulator/DMA/CIM primitive/NoC/synchronization 参数是什么。
+- architecture spec 缺失时是否坚持 `estimated_cycles=0`，避免输出误导性性能数据。
 
 ## 资源
 
@@ -63,6 +68,7 @@
 - `/data4/jjgong/TileOPs`
 - `/data4/jjgong/codegen_sstnoc/docs/sst-codegen-first-design.md`
 - `/home/jiajun/codegen_sstnoc/tilelang_riscv_cim_backend_plan.md`
+- `/home/jiajun/codegen_sstnoc/docs/cim-tileir-prototype-summary.md`
 
 ## 可视化/浏览器结论
 
