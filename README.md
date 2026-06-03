@@ -28,6 +28,7 @@
 - `scripts/`：初始化、同步和验证的辅助脚本。
 - `tilelang_cim/`：CIM-TileIR 编译器侧原型包。
 - `examples/gemm_ir.py`：生成静态 GEMM 的 `CIM-TileIR JSON` 示例。
+- `examples/extract_tilelang_gemm.py`：从窄模板 TileLang GEMM 源码提取 `CIM-TileIR JSON` 的示例。
 - `tests/`：CIM-TileIR 原型的 pytest 测试。
 
 ## 工作原则
@@ -68,6 +69,17 @@ python examples/gemm_ir.py \
 ```bash
 python -m pytest tests -q
 ```
+
+从 TileLang GEMM 源码文件提取 `CIM-TileIR JSON`：
+
+```bash
+python examples/extract_tilelang_gemm.py \
+  tests/fixtures/tilelang_gemm_fixture.py \
+  --output tilelang_gemm.cimtile.json \
+  --mesh-w 8 --mesh-h 8
+```
+
+当前 extractor 是第一版 MVP，只支持标准静态 GEMM 模板。它可以识别源码里的 `T.Tensor`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined`、`T.gemm`，也可以从 TileLang `PrimFunc.script()` 的 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 形态中提取同类信息；暂不支持任意动态 shape、复杂 fusion、转置 GEMM、复杂调度或完整 TileLang pass pipeline。
 
 ## 推荐流程
 

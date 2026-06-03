@@ -53,11 +53,13 @@
 
 ### 阶段 6：CIM-TileIR 编译器侧原型
 - [x] 定义 `CIM-TileIR` GEMM 子集 schema
-- [ ] 设计 `TileLang/TIR -> CIM-TileIR JSON` extractor
+- [x] 设计 `TileLang/TIR -> CIM-TileIR JSON` extractor MVP
 - [x] 支持 static shape GEMM、2D output tile grid 和 output-stationary dataflow
-- [ ] 支持 `T.Kernel`、`T.copy`、`T.gemm`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined(num_stages=1/2)` 的语义提取
+- [x] 支持标准模板中 `T.Kernel`、`T.copy`、`T.gemm`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined(num_stages=1/2)` 的语义提取
+- [x] 支持 TileLang `PrimFunc.script()` 中 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 的 MVP 提取
 - [x] 新增 JSON checker，验证 tile size、buffer scope、mapping 和 program op 顺序
 - [x] 新增静态 GEMM JSON 生成示例
+- [ ] 扩展支持转置 GEMM、非标准临时 buffer copy 和更多 TileOPs GEMM 变体
 - **状态：**进行中
 
 ### 阶段 7：CIM 抽象架构与 event planner

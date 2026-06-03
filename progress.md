@@ -127,3 +127,25 @@
   - `README.md`
   - `task_plan.md`
   - `progress.md`
+
+### TileLang GEMM extractor MVP
+- **状态：**已完成窄模板识别
+- 已执行的操作：
+  - 新增 `extract_gemm_ir_from_source`，可从标准 TileLang GEMM 源码中提取 A/B/C shape、dtype、BM/BN/BK、pipeline stages，并生成 `CIM-TileIR`。
+  - 新增 `extract_gemm_ir_from_tilelang`，当输入是 TileLang `PrimFunc` 时，优先读取 `script()` 结果并识别 lowering 后的 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 形态。
+  - 新增 `examples/extract_tilelang_gemm.py`，支持从 `.py` 源码文件提取并导出 JSON。
+  - 新增 `tests/fixtures/tilelang_gemm_fixture.py`，作为标准 TileLang GEMM 测试样例。
+  - 新增 pytest 测试覆盖源码字符串、真实 TileLang `PrimFunc` 和 CLI 提取路径。
+- 当前边界：
+  - 支持 static shape、标准 GEMM 模板、output-stationary mapping、`num_stages=1/2`。
+  - 暂不支持转置 GEMM、动态 shape、复杂 fusion、NoC 通信、真实 simulator 或完整 TileLang pass pipeline。
+- 已创建/修改的文件：
+  - `tilelang_cim/extractor.py`
+  - `tilelang_cim/__init__.py`
+  - `examples/extract_tilelang_gemm.py`
+  - `tests/fixtures/tilelang_gemm_fixture.py`
+  - `tests/test_tilelang_gemm_extractor.py`
+  - `tests/test_extract_tilelang_gemm_example.py`
+  - `README.md`
+  - `task_plan.md`
+  - `progress.md`
