@@ -106,3 +106,24 @@
 | ELF mode 作为长期目标 | runtime ABI、RISC-V toolchain、OS loader 均未具备 |
 | 内部 target 标记优先复用 `c` target + key/tag | 降低新增 TVM target kind 和主链路改造风险 |
 | `TileOPs` 继续作为参考，不纳入第一阶段修改 | 先聚焦 TileLang/TIR 语义提取和 IR schema |
+
+### CIM-TileIR 原型第一步
+- **状态：**已完成第一版 schema/checker/example 闭环
+- 已执行的操作：
+  - 新增 `tilelang_cim` 原型包。
+  - 新增 `build_gemm_ir`，可生成静态 GEMM 的 `CIM-TileIR` Python dict。
+  - 新增 `validate_cim_tile_ir`，检查 mesh、tile、A/B/C tensor、output-stationary mapping、program op 顺序和 `loop_k` body。
+  - 新增 `to_json_text` / `write_json`，支持稳定 JSON 导出。
+  - 新增 `examples/gemm_ir.py`，可通过命令行生成 `gemm.cimtile.json`。
+  - 新增 pytest 测试覆盖 IR 构造、JSON 导出、checker 错误路径和示例 CLI。
+- 已创建/修改的文件：
+  - `tilelang_cim/__init__.py`
+  - `tilelang_cim/builder.py`
+  - `tilelang_cim/checker.py`
+  - `tilelang_cim/json_export.py`
+  - `examples/gemm_ir.py`
+  - `tests/test_cim_tile_ir.py`
+  - `tests/test_gemm_ir_example.py`
+  - `README.md`
+  - `task_plan.md`
+  - `progress.md`

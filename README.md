@@ -26,6 +26,9 @@
 - `progress.md`：按时间顺序记录开发过程和验证结果。
 - `docs/`：更深入的设计说明和 ADR。
 - `scripts/`：初始化、同步和验证的辅助脚本。
+- `tilelang_cim/`：CIM-TileIR 编译器侧原型包。
+- `examples/gemm_ir.py`：生成静态 GEMM 的 `CIM-TileIR JSON` 示例。
+- `tests/`：CIM-TileIR 原型的 pytest 测试。
 
 ## 工作原则
 
@@ -40,6 +43,31 @@
 - 后续如需扩展为真实可执行后端，再在首版基础上继续推进。
 - CIM 路线第一阶段不新增真正的 `riscv_cim_mesh` target kind，建议先复用 `c` target 并通过 `cim`/`sst`/`noc` key 或 tag 做内部分流。
 - `tilelang_riscv_cim_backend_plan.md` 记录 CIM 长期路线；其中 `ir_only` / JSON 生成是近期可落地目标，abstract sim、runtime ABI 和 ELF mode 是后续建设目标。
+
+## CIM-TileIR 原型用法
+
+生成一个静态 GEMM 的 `CIM-TileIR JSON`：
+
+```bash
+python examples/gemm_ir.py --output gemm.cimtile.json
+```
+
+自定义矩阵、tile 和 mesh 参数：
+
+```bash
+python examples/gemm_ir.py \
+  --output gemm.cimtile.json \
+  --m 1024 --n 1024 --k 1024 \
+  --bm 64 --bn 64 --bk 32 \
+  --mesh-w 8 --mesh-h 8 \
+  --pipeline-stages 2
+```
+
+运行原型测试：
+
+```bash
+python -m pytest tests -q
+```
 
 ## 推荐流程
 
