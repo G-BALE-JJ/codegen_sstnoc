@@ -63,11 +63,12 @@
 - **状态：**进行中
 
 ### 阶段 7：CIM 抽象架构与 event planner
-- [ ] 定义 mesh/core/local SRAM/accumulator/CIM GEMM/DMA/NoC/barrier 的最小架构规格
-- [ ] 实现 `CIM-TileIR JSON` loader
-- [ ] 生成 per-core tile task 和 event list
-- [ ] 输出 DMA bytes、CIM op count、estimated cycles、core utilization 等粗略统计
-- **状态：**未开始
+- [x] 定义 mesh/core/local SRAM/accumulator/CIM GEMM/DMA 的最小抽象规格
+- [x] 实现 `CIM-TileIR JSON` loader / event planner MVP
+- [x] 生成 per-core tile task 和 event list
+- [x] 输出 DMA bytes、CIM op count、MACs、core utilization 等粗略统计
+- [ ] 增加 NoC、barrier、pipeline overlap 和非 0 cycle model
+- **状态：**进行中
 
 ### 阶段 8：CIM runtime ABI 与 ELF 长期闭环
 - [ ] 定义 runtime ABI，例如 `tl_core_id`、`tl_dma_load`、`tl_dma_store`、`tl_cim_gemm`

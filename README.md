@@ -81,6 +81,16 @@ python examples/extract_tilelang_gemm.py \
 
 当前 extractor 是第一版 MVP，只支持标准静态 GEMM 模板。它可以识别源码里的 `T.Tensor`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined`、`T.gemm`，也可以从 TileLang `PrimFunc.script()` 的 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 形态中提取同类信息；暂不支持任意动态 shape、复杂 fusion、转置 GEMM、复杂调度或完整 TileLang pass pipeline。
 
+将 `CIM-TileIR JSON` 展开成 abstract event plan：
+
+```bash
+python examples/plan_events.py \
+  tilelang_gemm.cimtile.json \
+  --output tilelang_gemm.eventplan.json
+```
+
+第一版 event planner 只做抽象事件展开和粗略统计。输出包括 per-output-tile task、core 映射、`clear_acc`、`dma_load`、`cim_gemm`、`dma_store` 事件，以及 `dma_load_bytes`、`dma_store_bytes`、`cim_gemm_ops`、`macs`、`core_utilization` 等统计；`estimated_cycles` 暂固定为 0，不代表真实硬件周期。
+
 ## 推荐流程
 
 1. 开始新阶段前先更新 `task_plan.md`。

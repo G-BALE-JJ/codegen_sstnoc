@@ -149,3 +149,26 @@
   - `README.md`
   - `task_plan.md`
   - `progress.md`
+
+### Abstract event planner MVP
+- **状态：**已完成第一版事件展开
+- 已执行的操作：
+  - 新增 `build_event_plan`，从 `CIM-TileIR` dict 生成 abstract event plan。
+  - 新增 per-output-tile task 展开逻辑，按当前 `output_stationary` / `bx % mesh_w` / `by % mesh_h` 规则映射到 core。
+  - 每个 task 展开 `clear_acc`、每个 K tile 的 `dma_load A`、`dma_load B`、`cim_gemm`，以及最终 `dma_store C`。
+  - 新增粗略统计：`output_tiles`、`total_cores`、`active_cores`、`core_utilization`、`dma_load_bytes`、`dma_store_bytes`、`cim_gemm_ops`、`macs`。
+  - 新增 `examples/plan_events.py`，支持从 `CIM-TileIR JSON` 生成 `eventplan JSON`。
+  - 新增 pytest 测试覆盖事件展开、core wrap-around、非法 IR 报错和 CLI 生成路径。
+- 当前边界：
+  - `estimated_cycles` 暂固定为 0。
+  - 暂不模拟 NoC、barrier、DMA/compute overlap、SRAM bank conflict 或 CIM array latency。
+  - 当前 core 利用率按至少分配到一个 output tile 的 core 数量统计。
+- 已创建/修改的文件：
+  - `tilelang_cim/event_planner.py`
+  - `tilelang_cim/__init__.py`
+  - `examples/plan_events.py`
+  - `tests/test_event_planner.py`
+  - `tests/test_plan_events_example.py`
+  - `README.md`
+  - `task_plan.md`
+  - `progress.md`
