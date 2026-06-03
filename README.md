@@ -16,6 +16,8 @@
 - 生成的 C 代码中需要能够表达 RISC-V 自定义指令。
 - 当前阶段不要求生成结果立即可执行。
 - 当前阶段不修改 `TileOPs`，但允许把它作为算子和使用方式的参考来源。
+- 新增的 RISC-V CIM 2D-mesh 方案属于后续路线图，近期目标收敛为 `TileLang GEMM -> CIM-TileIR JSON` 的编译器侧原型。
+- 当前项目尚无 CIM simulator、OS loader、runtime ABI、RISC-V ELF 工具链集成或真实 CIM primitive 源码，因此 sim/ELF 闭环均不属于当前阶段承诺。
 
 ## 目录说明
 
@@ -36,6 +38,8 @@
 - SST target 采用“`c` + SST 标记”方案。
 - 内部继续复用 `tilelang` 现有 `c` backend。
 - 后续如需扩展为真实可执行后端，再在首版基础上继续推进。
+- CIM 路线第一阶段不新增真正的 `riscv_cim_mesh` target kind，建议先复用 `c` target 并通过 `cim`/`sst`/`noc` key 或 tag 做内部分流。
+- `tilelang_riscv_cim_backend_plan.md` 记录 CIM 长期路线；其中 `ir_only` / JSON 生成是近期可落地目标，abstract sim、runtime ABI 和 ELF mode 是后续建设目标。
 
 ## 推荐流程
 

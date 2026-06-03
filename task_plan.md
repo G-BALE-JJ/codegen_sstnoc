@@ -4,6 +4,8 @@
 
 在 `tilelang` 中实现 SST 后端首版 codegen：识别到 SST 目标后，生成包含 RISC-V 自定义指令痕迹的 C 代码。首版只要求能生成 C 代码，不要求先完成可执行闭环；本目录继续作为项目控制中心，统一管理计划、决策和进度。
 
+后续 RISC-V CIM 2D-mesh 路线以 `TileLang GEMM -> CIM-TileIR JSON` 为下一阶段编译器侧目标。当前项目尚无 CIM simulator、OS loader、runtime ABI、RISC-V ELF 工具链集成或真实 CIM primitive 源码，因此 abstract sim、runtime ABI 和 ELF mode 只作为后续建设目标。
+
 ## 当前阶段
 
 阶段 4：实现准备
@@ -49,6 +51,28 @@
 - [ ] 为后续支持真实执行做铺垫
 - **状态：**未开始
 
+### 阶段 6：CIM-TileIR 编译器侧原型
+- [ ] 定义 `CIM-TileIR` GEMM 子集 schema
+- [ ] 设计 `TileLang/TIR -> CIM-TileIR JSON` extractor
+- [ ] 支持 static shape GEMM、2D output tile grid 和 output-stationary dataflow
+- [ ] 支持 `T.Kernel`、`T.copy`、`T.gemm`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined(num_stages=1/2)` 的语义提取
+- [ ] 新增 JSON checker，验证 tile size、buffer scope、mapping 和 program op 顺序
+- **状态：**规划中
+
+### 阶段 7：CIM 抽象架构与 event planner
+- [ ] 定义 mesh/core/local SRAM/accumulator/CIM GEMM/DMA/NoC/barrier 的最小架构规格
+- [ ] 实现 `CIM-TileIR JSON` loader
+- [ ] 生成 per-core tile task 和 event list
+- [ ] 输出 DMA bytes、CIM op count、estimated cycles、core utilization 等粗略统计
+- **状态：**未开始
+
+### 阶段 8：CIM runtime ABI 与 ELF 长期闭环
+- [ ] 定义 runtime ABI，例如 `tl_core_id`、`tl_dma_load`、`tl_dma_store`、`tl_cim_gemm`
+- [ ] 设计 C++ SPMD kernel codegen
+- [ ] 集成 RISC-V 编译、链接、加载工具链
+- [ ] 打通 GEMM ELF 闭环
+- **状态：**长期目标
+
 ## 关键问题
 
 1. SST 标记最终放在 `target.keys`、`tag`，还是其他自定义属性中？
@@ -57,6 +81,9 @@
 4. 哪些现有 `tilelang` 入口最适合挂接 SST 目标识别逻辑？
 5. 用哪些最小测试可以稳定验证“识别到 SST 后能生成对应 C 代码”？
 6. `TileOPs` 侧需要保留哪些最小案例作为后续联调样本？
+7. CIM-TileIR 第一版是否先作为 out-of-tree 包实现，还是直接挂到 `tilelang` pass pipeline？
+8. CIM 内部 target 标记使用 `c -keys=cim`、`c -keys=sst` 还是复用既有 `noc` key？
+9. 抽象 simulator 的 cycle model 先采用常数估算、公式估算还是表驱动估算？
 
 ## 已做决策
 
@@ -69,6 +96,9 @@
 | 优先复用 `tilelang` 现有 C 后端 | 现成的 `target.build.tilelang_c` 和 `tilelang_c_host` 是最稳的落点 |
 | SST 目标采用“`c` + SST 标记”方案 | 保持 `target.kind.name == "c"`，最大化复用现有 C backend，避免引入新的 target kind |
 | `TileOPs` 当前只作为参考，不作为首版修改目标 | 先聚焦编译链路本身，避免问题面扩散 |
+| CIM 路线第一阶段只做 `CIM-TileIR JSON`，不承诺 simulator/ELF | 当前尚无 CIM simulator、OS loader、runtime ABI 和 RISC-V ELF 工具链集成源码 |
+| CIM target 第一阶段不新增真正 `riscv_cim_mesh` target kind | 继续复用 `c` target + key/tag 可降低 TVM target 注册和主链路改造风险 |
+| CIM simulator 先按 abstract event planner 规划 | 在真实架构源码缺失时，先验证 IR、mapping 和统计模型更可控 |
 
 ## 遇到的问题
 
@@ -76,6 +106,7 @@
 |------|----------|
 | 目前没有现成的项目中枢目录 | 新建 `codegen_sstnoc` 并初始化基础文档 |
 | SST 目标的精确定义还未固定 | 首版先按“识别 SST 目标并输出 C 代码”推进，后续再细化 target 表达 |
+| 当前没有 CIM 架构、simulator、OS loader、runtime ABI 和 ELF 工具链源码 | 将 CIM 近期目标收敛为编译器侧 `CIM-TileIR JSON` 原型，sim/ELF 作为后续阶段 |
 
 ## 备注
 
