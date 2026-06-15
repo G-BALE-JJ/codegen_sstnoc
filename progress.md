@@ -199,3 +199,90 @@
   - `findings.md`
   - `tilelang_riscv_cim_backend_plan.md`
   - `progress.md`
+
+## 会话：2026-06-15
+
+### 当前分支主线确认
+- **状态：**已完成
+- 背景：
+  - 用户明确要求“一切以当前分支为准”，即以 `feat/cim-tileir-json` 上的 CIM-TileIR 技术路线为准。
+  - 因此 SST C codegen 降为历史背景和长期旁支，不再作为当前近期主线。
+- 已执行的操作：
+  - 将 `README.md` 当前范围改为 `TileLang GEMM -> CIM-TileIR JSON -> architecture-aware event plan`。
+  - 重写 `task_plan.md`，以 `architecture-aware event planning v0` 作为当前里程碑。
+  - 更新 `findings.md`，记录当前分支以 CIM-TileIR 为主线，以及 architecture spec 是后续前置项。
+- 已创建/修改的文件：
+  - `README.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+### Architecture-aware event planner v0
+- **状态：**完成
+- 已执行的操作：
+  - 新增 `tilelang_cim/architecture.py`。
+  - 新增 `load_architecture_spec`，支持从 JSON 文件读取 architecture spec。
+  - 新增 `validate_architecture_spec`，校验 mesh/core/DMA/CIM/NoC/sync/cycle model 字段。
+  - 新增 `validate_cim_tile_ir_for_arch`，联合校验 `CIM-TileIR` 与 architecture spec。
+  - 联合校验覆盖：
+    - IR mesh 与 architecture mesh 匹配。
+    - A/B dtype 属于 `cim.input_dtypes`。
+    - C dtype 匹配 `cim.acc_dtype`。
+    - `BM/BN/BK` 匹配 `cim.tile_m/tile_n/tile_k`。
+    - local SRAM 能容纳 pipeline stages 下的 A/B tile buffer。
+    - accumulator 能容纳 C tile。
+    - A/B/C tile bytes 满足 DMA alignment。
+  - 新增 toy architecture spec：`examples/architecture/toy_cim_mesh_v0.json`。
+  - 新增 `build_arch_event_plan`，在 `serial_formula_v0` 下生成 architecture-aware event plan。
+  - 扩展 `examples/plan_events.py --arch`，有 architecture spec 时输出 `arch_event_plan`，无 architecture spec 时保持原有 `event_plan` 行为。
+  - 新增 schema 文档：
+    - `docs/cim-architecture-spec.md`
+    - `docs/cim-event-plan-schema.md`
+  - 更新 `docs/cim-tileir-prototype-summary.md`，补充 architecture-aware planner v0 的能力与边界。
+- 当前 cycle model：
+  - `serial_formula_v0` 串行累加 `clear_acc`、DMA load、CIM GEMM、DMA store。
+  - DMA cycle 公式为 `startup_cycles + ceil(bytes / bytes_per_cycle)`。
+  - 全局 `estimated_cycles` 取所有 core 累计 cycles 的最大值。
+  - 不建模 DMA/compute overlap、NoC contention、barrier、SRAM bank conflict 或真实 runtime 调度。
+- 已创建/修改的文件：
+  - `tilelang_cim/architecture.py`
+  - `tilelang_cim/event_planner.py`
+  - `tilelang_cim/__init__.py`
+  - `examples/architecture/toy_cim_mesh_v0.json`
+  - `examples/plan_events.py`
+  - `tests/test_architecture_spec.py`
+  - `tests/test_arch_event_planner.py`
+  - `tests/test_plan_events_example.py`
+  - `docs/cim-architecture-spec.md`
+  - `docs/cim-event-plan-schema.md`
+  - `docs/cim-tileir-prototype-summary.md`
+  - `README.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+### 验证结果
+
+| 测试 | 命令 | 结果 |
+|------|------|------|
+| pytest | `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q` | 22 passed |
+| 文档检查 | `bash scripts/check_docs.sh` | 基础文档检查通过 |
+| GEMM IR 生成 | `python examples/gemm_ir.py --output /tmp/gemm.cimtile.json` | 成功 |
+| architecture-aware event plan CLI | `python examples/plan_events.py /tmp/gemm.cimtile.json --arch examples/architecture/toy_cim_mesh_v0.json --output /tmp/gemm.eventplan.json` | 成功，输出 `mode=arch_event_plan` |
+
+### 错误日志
+
+| 时间 | 错误 | 尝试次数 | 解决方式 |
+|------|------|----------|----------|
+| 2026-06-15 | 直接运行 `python -m pytest tests -q` 时 TileLang 默认写 `/home/jiajun/.tilelang`，当前环境只读 | 1 | 使用 `TILELANG_CACHE_DIR=/tmp/tilelang-cache` 后测试通过 |
+| 2026-06-15 | `test_arch_event_planner_*` 期望值最初把 C store bytes 误算，预期 `1153`，实际按公式应为 `1893` | 1 | 修正测试期望值，保持实现公式不变 |
+
+## 5 问恢复检查
+
+| 问题 | 答案 |
+|------|------|
+| 我现在在哪？ | 阶段 3 已完成，当前进入阶段 4：extractor 稳健性扩展 |
+| 我要去哪里？ | 增强 extractor，随后做 TileOPs-like smoke path |
+| 目标是什么？ | 以 `CIM-TileIR` 为主线，推进可检查、可解释的编译器侧 CIM 原型 |
+| 我学到了什么？ | architecture-aware planner 必须依赖显式 architecture spec；没有 spec 时保持 `estimated_cycles=0` |
+| 我已经做了什么？ | 完成 architecture spec、联合校验、`build_arch_event_plan`、`--arch` CLI、测试和 schema 文档 |

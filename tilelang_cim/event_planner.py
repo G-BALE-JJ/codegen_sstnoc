@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .architecture import ceildiv, tile_byte_sizes, validate_cim_tile_ir_for_arch
 from .checker import validate_cim_tile_ir
 
 
@@ -64,6 +65,74 @@ def build_event_plan(ir: dict[str, Any]) -> dict[str, Any]:
         "mesh": {"w": mesh_w, "h": mesh_h},
         "tile": dict(ir["tile"]),
         "tasks": tasks,
+        "stats": stats,
+    }
+
+
+def build_arch_event_plan(ir: dict[str, Any], arch_spec: dict[str, Any]) -> dict[str, Any]:
+    """Build an architecture-aware event plan using the serial_formula_v0 toy model."""
+    errors = validate_cim_tile_ir_for_arch(ir, arch_spec)
+    if errors:
+        raise ValueError("Invalid CIM-TileIR for architecture:\n" + "\n".join(f"- {error}" for error in errors))
+    if ir.get("kernel") != "gemm":
+        raise ValueError("Only gemm kernels are supported by the first event planner MVP")
+
+    mesh_w = ir["mesh"]["w"]
+    mesh_h = ir["mesh"]["h"]
+    bm = ir["tile"]["BM"]
+    bn = ir["tile"]["BN"]
+    m, _ = ir["tensors"]["A"]["shape"]
+    _, n = ir["tensors"]["B"]["shape"]
+    _, k_tiles = _find_loop_k(ir)
+
+    m_tiles = m // bm
+    n_tiles = n // bn
+    total_cores = mesh_w * mesh_h
+
+    tasks: list[dict[str, Any]] = []
+    stats = _new_stats(output_tiles=m_tiles * n_tiles, total_cores=total_cores)
+    stats["cycle_model"] = arch_spec["cycle_model"]["type"]
+    stats["estimated_task_cycles_sum"] = 0
+    stats["estimated_max_core_cycles"] = 0
+
+    active_core_ids: set[int] = set()
+    core_cycles = {core_id: 0 for core_id in range(total_cores)}
+
+    for by in range(m_tiles):
+        for bx in range(n_tiles):
+            core = _map_output_tile_to_core(bx=bx, by=by, mesh_w=mesh_w, mesh_h=mesh_h)
+            active_core_ids.add(core["id"])
+            events = _build_arch_task_events(ir=ir, arch_spec=arch_spec, bx=bx, by=by, k_tiles=k_tiles)
+            task_cycles = sum(event.get("cycles", 0) for event in events)
+            core_cycles[core["id"]] += task_cycles
+            _accumulate_stats(stats, events)
+            stats["estimated_task_cycles_sum"] += task_cycles
+            tasks.append(
+                {
+                    "task_id": f"tile_by{by}_bx{bx}",
+                    "output_tile": {"bx": bx, "by": by},
+                    "core": core,
+                    "cycles": task_cycles,
+                    "events": events,
+                }
+            )
+
+    active_core_cycles = {str(core_id): cycles for core_id, cycles in core_cycles.items() if cycles > 0}
+    stats["active_cores"] = len(active_core_ids)
+    stats["core_utilization"] = round(stats["active_cores"] / stats["total_cores"], 6)
+    stats["estimated_max_core_cycles"] = max(core_cycles.values(), default=0)
+    stats["estimated_cycles"] = stats["estimated_max_core_cycles"]
+
+    return {
+        "kernel": ir["kernel"],
+        "source_target": ir.get("target", "riscv_cim_mesh"),
+        "mode": "arch_event_plan",
+        "architecture": arch_spec["name"],
+        "cycle_model": arch_spec["cycle_model"]["type"],
+        "mesh": {"w": mesh_w, "h": mesh_h},
+        "tile": dict(ir["tile"]),
+        "tasks": tasks,
+        "core_cycles": active_core_cycles,
         "stats": stats,
     }
 
@@ -139,6 +208,76 @@ def _build_task_events(*, ir: dict[str, Any], bx: int, by: int, k_tiles: int) ->
     return events
 
 
+def _build_arch_task_events(
+    *,
+    ir: dict[str, Any],
+    arch_spec: dict[str, Any],
+    bx: int,
+    by: int,
+    k_tiles: int,
+) -> list[dict[str, Any]]:
+    bm = ir["tile"]["BM"]
+    bn = ir["tile"]["BN"]
+    bk = ir["tile"]["BK"]
+    a_bytes, b_bytes, c_bytes = tile_byte_sizes(ir)
+    dma = arch_spec["dma"]
+    cim = arch_spec["cim"]
+
+    clear_cycles = 1
+    a_load_cycles = _dma_cycles(a_bytes, dma)
+    b_load_cycles = _dma_cycles(b_bytes, dma)
+    store_cycles = _dma_cycles(c_bytes, dma)
+    compute_cycles = cim["cycles_per_cim_gemm"]
+
+    events: list[dict[str, Any]] = [{"op": "clear_acc", "buffer": "C_acc", "cycles": clear_cycles}]
+    for ko in range(k_tiles):
+        events.append(
+            {
+                "op": "dma_load",
+                "tensor": "A",
+                "ko": ko,
+                "bytes": a_bytes,
+                "cycles": a_load_cycles,
+                "tile": [by * bm, ko * bk, bm, bk],
+                "dst": "A_s",
+            }
+        )
+        events.append(
+            {
+                "op": "dma_load",
+                "tensor": "B",
+                "ko": ko,
+                "bytes": b_bytes,
+                "cycles": b_load_cycles,
+                "tile": [ko * bk, bx * bn, bk, bn],
+                "dst": "B_s",
+            }
+        )
+        events.append(
+            {
+                "op": "cim_gemm",
+                "ko": ko,
+                "BM": bm,
+                "BN": bn,
+                "BK": bk,
+                "macs": bm * bn * bk,
+                "cycles": compute_cycles,
+            }
+        )
+
+    events.append(
+        {
+            "op": "dma_store",
+            "tensor": "C",
+            "bytes": c_bytes,
+            "cycles": store_cycles,
+            "tile": [by * bm, bx * bn, bm, bn],
+            "src": "C_acc",
+        }
+    )
+    return events
+
+
 def _accumulate_stats(stats: dict[str, Any], events: list[dict[str, Any]]) -> None:
     for event in events:
         if event["op"] == "dma_load":
@@ -154,3 +293,7 @@ def _dtype_bytes(dtype: str) -> int:
     if dtype not in _DTYPE_BYTES:
         raise ValueError(f"Unsupported dtype for event planning: {dtype}")
     return _DTYPE_BYTES[dtype]
+
+
+def _dma_cycles(byte_count: int, dma: dict[str, Any]) -> int:
+    return dma["startup_cycles"] + ceildiv(byte_count, dma["bytes_per_cycle"])

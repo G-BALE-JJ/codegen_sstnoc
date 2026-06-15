@@ -83,6 +83,25 @@ per-output-tile task / event skeleton
 
 当前 `estimated_cycles` 固定为 0，不代表真实硬件周期。
 
+### 2.4 Architecture-aware event planner v0
+
+当前新增 `CIMArchitectureSpec` JSON 和 `build_arch_event_plan`，支持在显式提供 toy architecture spec 时做架构约束校验和 `serial_formula_v0` cycle estimate：
+
+- `validate_architecture_spec`：校验 architecture spec 字段。
+- `validate_cim_tile_ir_for_arch`：校验 `CIM-TileIR` 是否满足 local SRAM、accumulator、dtype、CIM tile shape、DMA alignment 等约束。
+- `build_arch_event_plan`：在 toy serial formula 下输出事件 cycles、task cycles、core cycles 和非 0 `estimated_cycles`。
+- `examples/plan_events.py --arch`：从 CLI 生成 architecture-aware event plan。
+
+对应文件：
+
+- `tilelang_cim/architecture.py`
+- `tilelang_cim/event_planner.py`
+- `examples/architecture/toy_cim_mesh_v0.json`
+- `tests/test_architecture_spec.py`
+- `tests/test_arch_event_planner.py`
+
+该能力仍然不代表真实 simulator。`serial_formula_v0` 只串行累加 DMA 和 CIM GEMM 的 toy cycles，不建模 overlap、NoC contention、barrier 或 SRAM bank conflict。
+
 ## 3. 当前可运行链路
 
 从 TileLang GEMM fixture 提取 `CIM-TileIR JSON`：
@@ -105,13 +124,22 @@ python examples/plan_events.py \
 运行测试：
 
 ```bash
-python -m pytest tests -q
+TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q
 ```
 
 文档检查：
 
 ```bash
 bash scripts/check_docs.sh
+```
+
+使用 toy architecture spec 生成 architecture-aware event plan：
+
+```bash
+python examples/plan_events.py \
+  /tmp/tilelang_gemm.cimtile.json \
+  --arch examples/architecture/toy_cim_mesh_v0.json \
+  --output /tmp/tilelang_gemm.eventplan.json
 ```
 
 ## 4. 为什么当前 event expander 仍然有意义

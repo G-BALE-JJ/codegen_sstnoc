@@ -28,3 +28,30 @@ def test_plan_events_example_writes_event_plan_json(tmp_path):
     assert payload["mode"] == "event_plan"
     assert len(payload["tasks"]) == 8
     assert payload["stats"]["dma_load_bytes"] == 65536
+
+
+def test_plan_events_example_writes_arch_event_plan_json(tmp_path):
+    ir_path = tmp_path / "gemm.cimtile.json"
+    plan_path = tmp_path / "gemm.eventplan.json"
+    write_json(
+        build_gemm_ir(m=128, n=128, k=64, bm=64, bn=64, bk=32, mesh_w=8, mesh_h=8),
+        ir_path,
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            "examples/plan_events.py",
+            str(ir_path),
+            "--arch",
+            "examples/architecture/toy_cim_mesh_v0.json",
+            "--output",
+            str(plan_path),
+        ],
+        check=True,
+    )
+
+    payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert payload["mode"] == "arch_event_plan"
+    assert payload["architecture"] == "toy_cim_mesh_v0"
+    assert payload["stats"]["estimated_cycles"] == 1893
