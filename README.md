@@ -12,10 +12,10 @@
 ## 当前范围
 
 - 当前分支以 RISC-V CIM 2D-mesh 的 `CIM-TileIR` 技术路线为主线。
-- 近期目标是完成 `TileLang GEMM -> CIM-TileIR JSON -> architecture-aware event plan` 的编译器侧原型。
+- 近期目标是完成 `TileLang GEMM -> CIM-TileIR JSON/MatmulOpDesc -> Golem SST env/contract` 的参数导出闭环。
 - 当前已经支持静态 GEMM 的 `CIM-TileIR JSON` 构造、窄模板 TileLang GEMM 提取，以及 abstract event skeleton 展开。
-- 下一阶段重点是补齐 `CIMArchitectureSpec`，用架构规格校验 local SRAM、accumulator、dtype、CIM tile shape、DMA 和 cycle model。
-- 当前项目尚无真实 CIM simulator、OS loader、runtime ABI、RISC-V ELF 工具链集成或真实 CIM primitive 源码，因此 sim/ELF 闭环均不属于当前阶段承诺。
+- 已完成 toy `CIMArchitectureSpec` 与 `serial_formula_v0` planner。由于本地已经有 `RISC-V-CIM-Manycore-SST` 的 Golem 硬件/运行时链路，下一阶段重点转为 Golem SST env/contract exporter。
+- 当前不承诺 OS loader、runtime ABI 或 RISC-V ELF 工具链闭环；首版硬件对接以生成 `golem_sst.env`、`matmul_op_desc_resolved.json`、`matmul_env_mapping_v1.json` 并驱动既有 `run_noc_dma_pipeline.sh` smoke path 为目标。
 - SST C codegen 方案保留为历史背景和长期旁支，不再作为当前分支的近期主线。
 
 ## 目录说明
@@ -30,6 +30,7 @@
 - `examples/extract_tilelang_gemm.py`：从窄模板 TileLang GEMM 源码提取 `CIM-TileIR JSON` 的示例。
 - `examples/plan_events.py`：将 `CIM-TileIR JSON` 展开为 abstract event plan 的示例。
 - `tests/`：CIM-TileIR 原型的 pytest 测试。
+- `docs/golem-runtime-codegen-roadmap.md`：对接 `RISC-V-CIM-Manycore-SST` Golem runtime 的下一步路线。
 
 ## 工作原则
 
@@ -102,7 +103,7 @@ python examples/plan_events.py \
 
 提供 `--arch` 后，planner 会先校验 `CIM-TileIR` 是否满足架构约束，再按 `serial_formula_v0` 生成每个事件和每个 core 的粗略 cycle estimate。该估计只适用于 toy spec 和串行公式，不代表真实硬件性能。
 
-当前 CIM 原型阶段的完整整理见 `docs/cim-tileir-prototype-summary.md`。该文档同时列出了后续进入 architecture-aware planner 前需要补齐的 architecture spec 信息，包括 mesh/core、local SRAM、accumulator、DMA、CIM primitive、NoC、synchronization、mapping/dataflow 和 cycle model。
+当前 CIM 原型阶段的完整整理见 `docs/cim-tileir-prototype-summary.md`。Golem SST 硬件对齐后的下一步路线见 `docs/golem-runtime-codegen-roadmap.md`。新路线的重点是从 TileLang/CIM-TileIR 参数导出到 Golem SST runtime contract：`golem_sst.env`、resolved matmul contract、env mapping 和 SST smoke 验证。Golem 硬件参数首版作为 exporter 的后端约束校验，不作为第一阶段主产物。
 
 ## 推荐流程
 

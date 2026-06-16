@@ -286,3 +286,65 @@
 | 目标是什么？ | 以 `CIM-TileIR` 为主线，推进可检查、可解释的编译器侧 CIM 原型 |
 | 我学到了什么？ | architecture-aware planner 必须依赖显式 architecture spec；没有 spec 时保持 `estimated_cycles=0` |
 | 我已经做了什么？ | 完成 architecture spec、联合校验、`build_arch_event_plan`、`--arch` CLI、测试和 schema 文档 |
+
+## 会话：2026-06-16
+
+### Golem SST 硬件架构对齐分析
+- **状态：**已完成路线分析，待后续实现阶段启动
+- **背景：**
+  - 用户说明本地已经有真实硬件架构，位于 `/data4/jjgong/RISC-V-CIM-Manycore-SST`。
+  - 用户已将硬件项目总结放在 `/data4/jjgong/codegen_sstnoc/summary.md`，希望先分析硬件架构，再规划 `codegen_noc` 下一步。
+- 已执行的操作：
+  - 阅读 `codegen_sstnoc` 当前规划、发现、进度和 CIM-TileIR 文档。
+  - 阅读 `summary.md` 中的 Golem SST 架构总结。
+  - 阅读硬件侧 Golem 配置文件、runtime header、RoCC 指令封装、`pipeline_config.h`、HBM 初始化脚本和 contract 示例。
+  - 确认当前 toy `arch_event_plan` 与硬件 runtime 在 task 映射、A/B reuse、memory node、B vector packing、local GM layout 和 cycle model 上存在语义差异。
+  - 新增路线文档 `docs/golem-runtime-codegen-roadmap.md`。
+  - 更新 `task_plan.md`，将阶段 4 调整为 Golem SST architecture spec adapter，并新增 Golem-aware planner、contract export、硬件 smoke integration 和 stats-based cycle 校准阶段。
+  - 更新 `findings.md`，记录硬件对齐结论和待确认事项。
+- 核心结论：
+  - `codegen_noc` 下一步不应直接生成 RISC-V ELF 或 RoCC inline assembly。
+  - 最短路径是把 `CIM-TileIR` 对接到 Golem runtime contract：先生成 Golem architecture spec、macro-task event plan、resolved matmul contract 和 env 片段，再驱动 `run_noc_dma_pipeline.sh` 验证。
+  - 在硬件 WCP micro-tiling 未完成前，codegen 首版应严格要求 `BM == GOLEM_ARRAY_OUTPUT_SIZE`、`BK == GOLEM_ARRAY_INPUT_SIZE`、`BN <= GOLEM_NUM_ARRAYS`。
+- 已创建/修改的文件：
+  - `docs/golem-runtime-codegen-roadmap.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `README.md`
+  - `progress.md`
+
+### 5 问恢复检查
+
+| 问题 | 答案 |
+|------|------|
+| 我现在在哪？ | 阶段 4：Golem SST architecture spec adapter |
+| 我要去哪里？ | Golem-aware task planner、contract export、SST smoke integration |
+| 目标是什么？ | 让 `CIM-TileIR` 生成的计划能对齐并驱动现有 Golem SST runtime |
+| 我学到了什么？ | Golem runtime 的真实映射是 macro-task/worker/group/data-node，而不是 toy mesh `bx/by` 映射 |
+| 我已经做了什么？ | 完成硬件架构对齐分析，并把下一步路线固化到项目文档 |
+
+### 技术方向校准：前端参数到 SST env/contract
+- **状态：**已校准并更新规划
+- **背景：**
+  - 用户明确指出最终产物是“从 TileLang 语言解析参数，把编程语言解耦，把所有参数落到 SST 的环境以及脚本中去”。
+  - 因此原路线中把 `GolemArchitectureSpec adapter` 放在第一阶段会偏向硬件建模，不符合当前最短闭环。
+- 已执行的操作：
+  - 重写 `docs/golem-runtime-codegen-roadmap.md`，将主线改为 `TileLang/CIM-TileIR -> Golem SST env/contract exporter`。
+  - 更新 `task_plan.md`，把当前阶段改为 `TileLang-to-Golem SST env/contract exporter`。
+  - 更新 `README.md`，明确下一阶段产物是 `golem_sst.env`、`matmul_op_desc_resolved.json`、`matmul_env_mapping_v1.json`。
+  - 更新 `findings.md`，记录新决策：Golem 硬件参数首版作为 exporter 的后端约束校验，而不是第一阶段主模型。
+- 新的下一步：
+  - 新增 `tilelang_cim/golem_exporter.py`。
+  - 新增 `tilelang_cim/golem_constraints.py`。
+  - 新增 `examples/export_golem_sst.py`。
+  - 输出可被 `run_noc_dma_pipeline.sh` 使用的 env 和 contract artifacts。
+
+### 5 问恢复检查
+
+| 问题 | 答案 |
+|------|------|
+| 我现在在哪？ | 阶段 4：TileLang-to-Golem SST env/contract exporter |
+| 我要去哪里？ | 先完成参数导出器，再做 SST 脚本注入 smoke path |
+| 目标是什么？ | 从 TileLang/CIM-TileIR 抽取 GEMM 参数，并生成 Golem SST 可消费的 env/contract |
+| 我学到了什么？ | Golem architecture spec 不应作为第一阶段主产物，硬件参数应先服务 exporter 合法性校验 |
+| 我已经做了什么？ | 修正技术路线和项目规划，使其对齐用户确认的最终产物 |

@@ -18,7 +18,7 @@
 - SST C codegen 方案保留为历史背景和长期旁支，不作为当前分支近期实现主线。
 - `TileOPs` 主要是算子层和 manifest 层，当前阶段不修改它。
 - `TileOPs/tests/ops/test_gemm.py` 和相关 `gemm` 实现可以作为后续 smoke path 参考，但当前先使用 TileOPs-like fixture 控制复杂度。
-- 当前工作区只有 `tilelang` 和 `TileOPs` 相关源码，尚无 RISC-V CIM 架构源码、simulator、OS loader、runtime ABI、RISC-V ELF 工具链集成或真实 CIM primitive 实现。
+- 早期调研时当前工作区只有 `tilelang` 和 `TileOPs` 相关源码，尚无 RISC-V CIM 架构源码、simulator、OS loader、runtime ABI、RISC-V ELF 工具链集成或真实 CIM primitive 实现；截至 2026-06-16，本地已新增 `/data4/jjgong/RISC-V-CIM-Manycore-SST`，可作为真实 Golem SST 硬件/运行时对接目标。
 - RISC-V CIM 2D-mesh 方向仍然可行，但近期应收敛为编译器侧原型，而不是直接承诺 sim/ELF 可执行闭环。
 - TileLang 内部保留 `tl.tileop.copy`、`tl.tileop.gemm` 等 high-level tile op 语义，适合在 `LowerTileOp` 之前通过 TIR visitor/pass 提取。
 - CIM 方案第一阶段建议继续复用 `c` target + key/tag 的目标标记策略，待 IR schema、extractor 和 abstract event planner 稳定后再包装 `riscv_cim_mesh` 用户接口。
@@ -26,6 +26,16 @@
 - 后续若要让 planner 具备架构意义，需要先定义 `CIMArchitectureSpec`，至少覆盖 mesh/core、local SRAM、accumulator、DMA、CIM primitive、NoC、synchronization、mapping/dataflow 和 cycle model。
 - `CIMArchitectureSpec` 第一版适合采用 JSON + Python checker，先保证可读、可测试、可由 CLI 加载。
 - `serial_formula_v0` 可以作为第一版 toy cycle model：串行累加 DMA load、CIM compute、DMA store，不建模 overlap、NoC contention、barrier 或 bank conflict。
+- Golem runtime 的关键抽象不是 toy mesh 上的 `by/bx -> core`，而是 `macro_task -> worker_slot -> worker_core -> group -> data_node`。
+- Golem GEMM 数据布局由 `pipeline_config.h` 与 `tools/gen_hbm_init.py` 共同定义：A 按 m tile/k tile 存储，B 按 n tile/k tile/n_col vector pack 存储，C 按 macro-task slot 和 reuse offset 存储。
+- 当前 Golem 路径支持 `int32` / `fp32`，而不是 toy spec 默认的 `int8 -> int32`。
+- 当前硬件约束下 `BK` 应等于 `GOLEM_ARRAY_INPUT_SIZE`，`BM` 应等于 `GOLEM_ARRAY_OUTPUT_SIZE`，`BN` 不应超过 `GOLEM_NUM_ARRAYS`；硬件 micro-tiling 完成前不应由 codegen 放宽这些约束。
+- `WorkerTaskListHeaderRuntime` 是 WCP 路径的关键 descriptor，包含 worker slot、active worker cores、memory node、block shape、stride、local GM 地址、slot count 和 A/B reuse 参数。
+- 硬件侧已有 `matmul_op_desc_resolved.json` 与 `matmul_env_mapping_v1.json` contract 文件，适合作为 `codegen_noc` 首版输出目标。
+- 当前性能瓶颈来自 WCP/调度侧 strict-order consumption 导致的 ready-to-compute queue wait；因此后续 cycle model 应优先建模 WCP slot、prefetch window、reuse window 和队列等待，而不是只微调 DMA bandwidth 公式。
+- 2026-06-16 用户进一步明确最终产物：从 TileLang 语言解析参数，解耦前端编程语言，把所有必要参数落到 SST 的 env、contract JSON 和脚本输入中。
+- 因此下一阶段主线应调整为 `TileLang/CIM-TileIR -> Golem SST env/contract exporter`，而不是 `GolemArchitectureSpec adapter`。
+- Golem 硬件参数首版应作为 exporter 的后端约束校验，例如 dtype、layout、transpose、tile shape 与 array input/output/num arrays 的匹配，不应作为用户可见的第一阶段主模型。
 
 ## 技术决策
 
@@ -43,9 +53,13 @@
 | CIM sim mode 先定义为 abstract event expander | 在没有真实 simulator 和 architecture spec 的情况下，先输出事件骨架和粗略统计，不输出真实性能结论 |
 | CIM ELF mode 归入长期目标 | runtime ABI、RISC-V toolchain、OS loader 均需要后续建设 |
 | CIM target 第一阶段不新增真正 target kind | 复用 `c` target + key/tag 可以降低主链路改造风险 |
-| 下一阶段优先定义 `CIMArchitectureSpec` | 没有架构参数时继续扩展 cycle model 或 mapping policy 容易产生误导 |
+| 下一阶段优先定义 toy `CIMArchitectureSpec` | 阶段 3 已完成，用于 toy architecture-aware planner；不是 Golem 对接主线 |
 | 有 architecture spec 时才输出非 0 cycle estimate | cycle estimate 必须有明确参数来源 |
 | 第一版 cycle model 使用 `serial_formula_v0` | 建立可解释、可测试的 toy 模型，不提前承诺真实硬件性能 |
+| Golem 对接优先走 contract/env export | 现有硬件脚本已经能消费 env 和 resolved contract，先打通 smoke path 比直接生成 ELF 更稳 |
+| `golem_event_plan` 与 toy `arch_event_plan` 并存 | toy path 保留为 IR sanity，Golem path 用于真实 SST runtime 对齐 |
+| Golem 首版严格拒绝非硬件 tile shape | WCP micro-tiling 尚未完成，放宽 shape 会生成硬件 runtime 不能正确执行的 plan |
+| Golem exporter 优先于 Golem architecture spec adapter | 用户最终产物是前端参数到 SST env/script 填充；硬件参数只作为 exporter 的合法性约束 |
 
 ## 遇到的问题
 
@@ -63,6 +77,11 @@
 - architecture spec 缺失时是否坚持 `estimated_cycles=0`，避免输出误导性性能数据。
 - `serial_formula_v0` 后续是否应扩展为 overlap model、NoC model 或表驱动 model。
 - TileOPs-like smoke path 应优先覆盖普通 GEMM 还是 grouped GEMM。
+- exporter 首版输入是否同时支持 TileLang 源码和 `CIM-TileIR JSON`，还是先只支持 JSON。
+- Golem 后端约束首版参数来自 CLI 默认值、配置 JSON，还是读取硬件侧 env。
+- `codegen_sstnoc` 是否应直接调用 `run_noc_dma_pipeline.sh`，还是只生成可复用 artifacts 并由硬件仓库执行。
+- `run_noc_dma_pipeline.sh` 是否需要新增显式 `--env-file` / `--contract-dir`，还是首版只通过 `source golem_sst.env` 和 `GOLEM_ARTIFACT_ROOT` 注入。
+- `golem_event_plan` 是否延后到 env/contract export 与 smoke path 稳定后再实现。
 
 ## 资源
 
@@ -71,6 +90,12 @@
 - `/data4/jjgong/codegen_sstnoc/tilelang_cim`
 - `/data4/jjgong/codegen_sstnoc/docs/cim-tileir-prototype-summary.md`
 - `/data4/jjgong/codegen_sstnoc/tilelang_riscv_cim_backend_plan.md`
+- `/data4/jjgong/codegen_sstnoc/docs/golem-runtime-codegen-roadmap.md`
+- `/data4/jjgong/RISC-V-CIM-Manycore-SST`
+- `/data4/jjgong/RISC-V-CIM-Manycore-SST/src/sst/elements/golem/tests/configs/`
+- `/data4/jjgong/RISC-V-CIM-Manycore-SST/src/sst/elements/golem/tests/small/mvm_noc_int_array/pipeline_config.h`
+- `/data4/jjgong/RISC-V-CIM-Manycore-SST/src/sst/elements/golem/tests/small/mvm_noc_int_array/gemm_matmul_op.h`
+- `/data4/jjgong/RISC-V-CIM-Manycore-SST/src/sst/elements/golem/tests/tools/gen_hbm_init.py`
 
 ## 可视化/浏览器结论
 
