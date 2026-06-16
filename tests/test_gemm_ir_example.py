@@ -26,6 +26,12 @@ def test_gemm_ir_example_writes_valid_json(tmp_path):
             "64",
             "--bk",
             "32",
+            "--a-dtype",
+            "fp32",
+            "--b-dtype",
+            "fp32",
+            "--c-dtype",
+            "fp32",
             "--mesh-w",
             "4",
             "--mesh-h",
@@ -37,4 +43,7 @@ def test_gemm_ir_example_writes_valid_json(tmp_path):
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert validate_cim_tile_ir(payload) == []
     assert payload["mesh"] == {"w": 4, "h": 2}
+    assert payload["tensors"]["A"]["dtype"] == "fp32"
+    assert payload["tensors"]["B"]["dtype"] == "fp32"
+    assert payload["tensors"]["C"]["dtype"] == "fp32"
     assert payload["program"][1]["count"] == 2

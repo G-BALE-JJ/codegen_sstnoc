@@ -17,6 +17,9 @@ def build_gemm_ir(
     a_dtype: str = "int8",
     b_dtype: str = "int8",
     c_dtype: str = "int32",
+    layout: str = "row_major",
+    transpose_a: bool = False,
+    transpose_b: bool = False,
 ) -> dict[str, Any]:
     """Build the first MVP CIM-TileIR dictionary for static GEMM."""
     if pipeline_stages not in (1, 2):
@@ -31,9 +34,13 @@ def build_gemm_ir(
         "mesh": {"w": mesh_w, "h": mesh_h},
         "tile": {"BM": bm, "BN": bn, "BK": bk},
         "tensors": {
-            "A": {"shape": [m, k], "dtype": a_dtype, "addr": "A_base"},
-            "B": {"shape": [k, n], "dtype": b_dtype, "addr": "B_base"},
-            "C": {"shape": [m, n], "dtype": c_dtype, "addr": "C_base"},
+            "A": {"shape": [m, k], "dtype": a_dtype, "layout": layout, "addr": "A_base"},
+            "B": {"shape": [k, n], "dtype": b_dtype, "layout": layout, "addr": "B_base"},
+            "C": {"shape": [m, n], "dtype": c_dtype, "layout": layout, "addr": "C_base"},
+        },
+        "attrs": {
+            "transpose_a": transpose_a,
+            "transpose_b": transpose_b,
         },
         "mapping": {
             "policy": "output_stationary",

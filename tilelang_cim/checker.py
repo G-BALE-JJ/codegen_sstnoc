@@ -24,6 +24,9 @@ def validate_cim_tile_ir(ir: dict[str, Any]) -> list[str]:
 
     if isinstance(tensors.get("A"), dict) and isinstance(tensors.get("B"), dict) and isinstance(tensors.get("C"), dict):
         _check_gemm_shapes(tensors["A"], tensors["B"], tensors["C"], ir.get("tile", {}), errors)
+        _check_tensor_layouts(tensors, errors)
+
+    _check_attrs(ir.get("attrs"), errors)
 
     mapping = ir.get("mapping")
     if not isinstance(mapping, dict):
@@ -82,6 +85,24 @@ def _check_gemm_shapes(
         errors.append("N must be divisible by tile.BN for the first MVP")
     if isinstance(bk, int) and bk > 0 and k % bk != 0:
         errors.append("K must be divisible by tile.BK for the first MVP")
+
+
+def _check_tensor_layouts(tensors: dict[str, Any], errors: list[str]) -> None:
+    for name in ("A", "B", "C"):
+        tensor = tensors.get(name)
+        if not isinstance(tensor, dict):
+            continue
+        if tensor.get("layout") != "row_major":
+            errors.append(f"tensors.{name}.layout must be row_major")
+
+
+def _check_attrs(attrs: Any, errors: list[str]) -> None:
+    if not isinstance(attrs, dict):
+        errors.append("attrs must be an object")
+        return
+    for name in ("transpose_a", "transpose_b"):
+        if not isinstance(attrs.get(name), bool):
+            errors.append(f"attrs.{name} must be a boolean")
 
 
 def _check_program(program: Any, errors: list[str]) -> None:

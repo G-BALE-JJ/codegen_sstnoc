@@ -33,9 +33,15 @@
 - `WorkerTaskListHeaderRuntime` 是 WCP 路径的关键 descriptor，包含 worker slot、active worker cores、memory node、block shape、stride、local GM 地址、slot count 和 A/B reuse 参数。
 - 硬件侧已有 `matmul_op_desc_resolved.json` 与 `matmul_env_mapping_v1.json` contract 文件，适合作为 `codegen_noc` 首版输出目标。
 - 当前性能瓶颈来自 WCP/调度侧 strict-order consumption 导致的 ready-to-compute queue wait；因此后续 cycle model 应优先建模 WCP slot、prefetch window、reuse window 和队列等待，而不是只微调 DMA bandwidth 公式。
-- 2026-06-16 用户进一步明确最终产物：从 TileLang 语言解析参数，解耦前端编程语言，把所有必要参数落到 SST 的 env、contract JSON 和脚本输入中。
-- 因此下一阶段主线应调整为 `TileLang/CIM-TileIR -> Golem SST env/contract exporter`，而不是 `GolemArchitectureSpec adapter`。
+- 2026-06-16 用户进一步明确最终产物：所有前端语言都解析到 `CIM-TileIR`，再由 `CIM-TileIR` 落实到具体硬件加载环境中。
+- 因此下一阶段主线应调整为 `All frontends -> CIM-TileIR -> Golem SST backend exporter`，而不是 `TileLang -> Golem` 直连，也不是 `GolemArchitectureSpec adapter`。
 - Golem 硬件参数首版应作为 exporter 的后端约束校验，例如 dtype、layout、transpose、tile shape 与 array input/output/num arrays 的匹配，不应作为用户可见的第一阶段主模型。
+- `run_noc_dma_pipeline.sh` 已支持通过 `GOLEM_ARTIFACT_ROOT` 定位外部 artifacts，并会在 HBM metadata 缺失时使用 `contracts/matmul_op_desc_resolved.json` 做兼容性兜底检查。
+- 因此 codegen 侧无需第一步修改硬件脚本；新增 wrapper 负责 source `golem_sst.env`、导出 `GOLEM_ARTIFACT_ROOT` 并调用硬件脚本即可。
+- exporter 生成的 `golem_sst.env` 必须包含 `GOLEM_ARRAY_INPUT_SIZE`、`GOLEM_ARRAY_OUTPUT_SIZE`、`GOLEM_NUM_ARRAYS`，否则硬件脚本可能回落到默认阵列参数，和 exporter 校验用的后端配置不一致。
+- 用户最新要求将当前验收从“直接跑 `run_noc_dma_pipeline.sh`”调整为“检查硬件内容是否已经解耦出来”。
+- 静态审计确认硬件侧已经具备：外部 `GOLEM_ARTIFACT_ROOT`、`GOLEM_MATMUL_*` env contract、resolved contract、env mapping contract、HBM generator contract 写出、runtime env 读取和 compile-time fallback macros。
+- `Golem-aware event plan` 的核心不是 toy mesh 映射，而是复用硬件 `pipeline_config.h` / `gen_hbm_init.py` 公式：macro-task diagonal banding、worker slot/core、group、data node、A/B packed-once base、C output slot 和 reuse offset。
 
 ## 技术决策
 
@@ -60,6 +66,11 @@
 | `golem_event_plan` 与 toy `arch_event_plan` 并存 | toy path 保留为 IR sanity，Golem path 用于真实 SST runtime 对齐 |
 | Golem 首版严格拒绝非硬件 tile shape | WCP micro-tiling 尚未完成，放宽 shape 会生成硬件 runtime 不能正确执行的 plan |
 | Golem exporter 优先于 Golem architecture spec adapter | 用户最终产物是前端参数到 SST env/script 填充；硬件参数只作为 exporter 的合法性约束 |
+| `CIM-TileIR` 是唯一前后端边界 | TileLang 只是第一个前端，Golem SST 只是第一个硬件后端；两者不能直接耦合 |
+| 新增 codegen 侧 SST smoke wrapper | 保持硬件仓库主脚本不变，通过 env/artifact root 完成参数注入 |
+| wrapper 默认 dry-run | 防止日常检查误触发完整 SST 仿真，完整仿真需显式 `--execute` |
+| 当前阶段验收改为静态审计硬件解耦点 | 用户明确不需要直接跑 `run_noc_dma_pipeline.sh`，只需确认硬件内容已经解耦 |
+| Golem-aware plan 不输出 cycle estimate | 当前阶段先对齐硬件映射语义，cycle/stats 校准进入下一阶段 |
 
 ## 遇到的问题
 
@@ -77,10 +88,9 @@
 - architecture spec 缺失时是否坚持 `estimated_cycles=0`，避免输出误导性性能数据。
 - `serial_formula_v0` 后续是否应扩展为 overlap model、NoC model 或表驱动 model。
 - TileOPs-like smoke path 应优先覆盖普通 GEMM 还是 grouped GEMM。
-- exporter 首版输入是否同时支持 TileLang 源码和 `CIM-TileIR JSON`，还是先只支持 JSON。
+- exporter 核心 API 必须以 `CIM-TileIR dict` 为输入；CLI 是否首版同时支持 TileLang 源码和 `CIM-TileIR JSON` 仍待确认。
 - Golem 后端约束首版参数来自 CLI 默认值、配置 JSON，还是读取硬件侧 env。
-- `codegen_sstnoc` 是否应直接调用 `run_noc_dma_pipeline.sh`，还是只生成可复用 artifacts 并由硬件仓库执行。
-- `run_noc_dma_pipeline.sh` 是否需要新增显式 `--env-file` / `--contract-dir`，还是首版只通过 `source golem_sst.env` 和 `GOLEM_ARTIFACT_ROOT` 注入。
+- 完整 SST smoke 是否能在小规模 GEMM 上稳定通过 `Simulation is complete` 和 `VERIFY-C = PASS`，当前作为后续可选后验验证。
 - `golem_event_plan` 是否延后到 env/contract export 与 smoke path 稳定后再实现。
 
 ## 资源

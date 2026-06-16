@@ -23,6 +23,9 @@ def main() -> None:
         mesh_w=args.mesh_w,
         mesh_h=args.mesh_h,
         pipeline_stages=args.pipeline_stages,
+        a_dtype=args.a_dtype,
+        b_dtype=args.b_dtype,
+        c_dtype=args.c_dtype,
     )
     errors = validate_cim_tile_ir(ir)
     if errors:
@@ -43,6 +46,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mesh-w", type=int, default=8)
     parser.add_argument("--mesh-h", type=int, default=8)
     parser.add_argument("--pipeline-stages", type=int, default=1)
+    parser.add_argument("--a-dtype", default="int8")
+    parser.add_argument("--b-dtype", default="int8")
+    parser.add_argument("--c-dtype", default="int32")
     return parser.parse_args()
 
 

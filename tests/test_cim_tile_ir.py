@@ -26,9 +26,25 @@ def test_build_gemm_ir_exports_checked_json():
     assert payload["target"] == "riscv_cim_mesh"
     assert payload["mesh"] == {"w": 8, "h": 8}
     assert payload["tile"] == {"BM": 64, "BN": 64, "BK": 32}
-    assert payload["tensors"]["A"] == {"shape": [1024, 1024], "dtype": "int8", "addr": "A_base"}
-    assert payload["tensors"]["B"] == {"shape": [1024, 1024], "dtype": "int8", "addr": "B_base"}
-    assert payload["tensors"]["C"] == {"shape": [1024, 1024], "dtype": "int32", "addr": "C_base"}
+    assert payload["tensors"]["A"] == {
+        "shape": [1024, 1024],
+        "dtype": "int8",
+        "layout": "row_major",
+        "addr": "A_base",
+    }
+    assert payload["tensors"]["B"] == {
+        "shape": [1024, 1024],
+        "dtype": "int8",
+        "layout": "row_major",
+        "addr": "B_base",
+    }
+    assert payload["tensors"]["C"] == {
+        "shape": [1024, 1024],
+        "dtype": "int32",
+        "layout": "row_major",
+        "addr": "C_base",
+    }
+    assert payload["attrs"] == {"transpose_a": False, "transpose_b": False}
     assert payload["mapping"]["policy"] == "output_stationary"
     assert [op["op"] for op in payload["program"]] == ["clear_acc", "loop_k", "store"]
     assert payload["program"][1]["count"] == 32
@@ -71,6 +87,21 @@ def test_checker_requires_gemm_tensors_and_output_stationary_mapping():
 
     assert "tensors.B is required" in errors
     assert "mapping.policy must be output_stationary" in errors
+
+
+def test_checker_rejects_missing_layout_and_invalid_transpose_flags():
+    ir = build_gemm_ir(m=128, n=128, k=128, bm=64, bn=64, bk=32)
+    del ir["tensors"]["A"]["layout"]
+    ir["tensors"]["B"]["layout"] = "column_major"
+    ir["attrs"]["transpose_a"] = 1
+    del ir["attrs"]["transpose_b"]
+
+    errors = validate_cim_tile_ir(ir)
+
+    assert "tensors.A.layout must be row_major" in errors
+    assert "tensors.B.layout must be row_major" in errors
+    assert "attrs.transpose_a must be a boolean" in errors
+    assert "attrs.transpose_b must be a boolean" in errors
 
 
 def test_build_gemm_ir_rejects_invalid_pipeline_stage():

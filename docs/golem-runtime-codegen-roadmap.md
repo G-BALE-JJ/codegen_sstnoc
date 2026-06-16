@@ -1,22 +1,25 @@
-# TileLang 到 Golem SST 参数导出路线
+# CIM-TileIR 到 Golem SST 后端导出路线
 
 ## 目标
 
-`codegen_noc` 的最终产物不是一个独立硬件建模器，也不是先生成 RISC-V ELF。当前主线是：
+`codegen_noc` 的最终产物不是一个独立硬件建模器，也不是先生成 RISC-V ELF。当前主线是把 `CIM-TileIR` 定义为唯一前后端解耦接口：
 
 ```text
-TileLang 源码 / TileLang PrimFunc
+所有前端语言
+  TileLang / TileOPs / 未来其他 DSL / 手写 JSON
         ↓
-解析 GEMM / tile / dtype / layout 参数
+统一 lowering / extraction
         ↓
-形成稳定的 MatmulOpDesc / CIM-TileIR 参数层
+CIM-TileIR
         ↓
-导出 Golem SST 运行需要的 env、contract JSON 和 artifact 目录
+Golem SST backend exporter
+        ↓
+Golem SST env、contract JSON 和 artifact 目录
         ↓
 驱动 RISC-V-CIM-Manycore-SST 的 run_noc_dma_pipeline.sh
 ```
 
-核心诉求是把前端编程语言与 SST 脚本参数解耦：用户写 TileLang，codegen 负责把参数落到 Golem SST 后端环境和脚本中。
+核心诉求是把前端编程语言与 SST 脚本参数解耦：所有前端只负责生成 `CIM-TileIR`，所有硬件后端只负责消费 `CIM-TileIR` 并生成自己的加载环境。TileLang 只是第一个前端，Golem SST 只是第一个硬件后端。
 
 ## 为什么不把 Architecture Spec Adapter 放在第一步
 
@@ -25,7 +28,7 @@ TileLang 源码 / TileLang PrimFunc
 对当前目标而言，硬件参数的第一职责不是成为用户可见的架构模型，而是成为 exporter 的后端约束：
 
 ```text
-TileLang 解析出的参数能不能填进当前 Golem SST 后端？
+CIM-TileIR 表达的参数能不能填进当前 Golem SST 后端？
 如果不能，应该报出什么明确错误？
 如果能，应该生成哪些 GOLEM_* 环境变量和 contract 文件？
 ```
@@ -50,9 +53,33 @@ TileLang 解析出的参数能不能填进当前 Golem SST 后端？
 - `small/mvm_noc_int_array/golem_matmul_runtime.h`：`golem_matmul_op_desc_t` 定义。
 - `small/mvm_noc_int_array/pipeline_config.h`：runtime 编译期参数和布局映射。
 
+## 前后端边界
+
+`CIM-TileIR` 必须保存后端需要的计算语义，但不能绑定具体 SST 脚本变量名。
+
+`CIM-TileIR` 应表达：
+
+- kernel 类型，例如 `gemm`
+- A/B/C tensor shape
+- A/B/C dtype
+- A/B/C layout
+- tile shape：`BM/BN/BK`
+- transpose flags：`transpose_a` / `transpose_b`
+- 必要的 mapping/dataflow hint
+
+`CIM-TileIR` 不应表达：
+
+- `GOLEM_MATMUL_M`
+- `GOLEM_GEMM_BLOCK_M`
+- `GOLEM_ARRAY_INPUT_SIZE`
+- `run_noc_dma_pipeline.sh`
+- HBM artifact 路径
+
+这些都属于 Golem SST backend exporter。
+
 ## 第一阶段主产物
 
-第一阶段应新增一个 Golem SST 参数导出器，而不是架构 spec adapter。
+第一阶段应新增一个 `CIM-TileIR -> Golem SST artifacts` 导出器，而不是架构 spec adapter，也不是 TileLang 到 Golem 的直连导出器。
 
 建议模块：
 
@@ -66,10 +93,21 @@ tilelang_cim/golem_exporter.py
 examples/export_golem_sst.py
 ```
 
-输入可以支持两类：
+核心 API 的输入必须是 `CIM-TileIR dict`。CLI 可以支持两类入口：
 
-1. TileLang 源码文件：先走现有 extractor。
-2. `CIM-TileIR JSON`：跳过前端解析，直接导出后端 contract。
+1. `CIM-TileIR JSON`：直接导出后端 contract。
+2. TileLang 源码文件：先走现有 TileLang frontend 生成 `CIM-TileIR`，再调用同一个 Golem backend exporter。
+
+内部流程必须保持：
+
+```text
+TileLang source
+  -> extract_gemm_ir_from_source()
+  -> CIM-TileIR
+  -> export_golem_sst_artifacts()
+```
+
+禁止把 TileLang AST/TIR 直接写成 `GOLEM_*` 环境变量。
 
 输出目录结构：
 
@@ -84,6 +122,10 @@ examples/export_golem_sst.py
 `golem_sst.env` 首版输出：
 
 ```bash
+export GOLEM_ARRAY_INPUT_SIZE=64
+export GOLEM_ARRAY_OUTPUT_SIZE=64
+export GOLEM_NUM_ARRAYS=64
+
 export GOLEM_MATMUL_M=4096
 export GOLEM_MATMUL_N=128
 export GOLEM_MATMUL_K=4096
@@ -139,7 +181,7 @@ export GOLEM_GEMM_BLOCK_K="$GOLEM_MATMUL_BLOCK_K"
 
 ## 后端约束校验
 
-导出器必须在写文件前做 Golem SST 后端约束校验。这个校验层可以读取一份后端配置，也可以首版使用显式 CLI 参数或默认值。
+导出器必须在写文件前对 `CIM-TileIR` 做 Golem SST 后端约束校验。这个校验层可以读取一份后端配置，也可以首版使用显式 CLI 参数或默认值。
 
 建议模块：
 
@@ -168,8 +210,16 @@ tilelang_cim/golem_constraints.py
 建议命令：
 
 ```bash
+# 从 CIM-TileIR JSON 导出，这是后端 exporter 的主入口
+python examples/export_golem_sst.py \
+  /tmp/gemm.cimtile.json \
+  --input-format cim-tileir-json \
+  --artifact-root /tmp/golem_codegen_artifacts
+
+# 从 TileLang 源码导出，这是便利入口，内部仍先转 CIM-TileIR
 python examples/export_golem_sst.py \
   tests/fixtures/tilelang_gemm_fixture.py \
+  --input-format tilelang-source \
   --artifact-root /tmp/golem_codegen_artifacts \
   --dtype fp32
 ```
@@ -189,23 +239,76 @@ TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q
 bash scripts/check_docs.sh
 ```
 
-## 第二阶段：SST 脚本注入 smoke
+## 第二阶段：硬件侧解耦静态审计
 
-第一阶段导出文件可直接用于硬件侧脚本：
+当前阶段不要求直接运行 `run_noc_dma_pipeline.sh`。验收目标改为：确认硬件仓库已经把前端参数入口解耦成 env/contract 形式，使 `CIM-TileIR -> Golem SST backend exporter` 的输出可以被硬件侧消费。
+
+静态审计命令：
 
 ```bash
-cd /data4/jjgong/RISC-V-CIM-Manycore-SST/src/sst/elements/golem/tests
-source /tmp/golem_codegen_artifacts/golem_sst.env
-GOLEM_ARTIFACT_ROOT=/tmp/golem_codegen_artifacts \
-bash run_noc_dma_pipeline.sh
+python scripts/check_golem_hardware_contracts.py \
+  --hardware-tests-dir /data4/jjgong/RISC-V-CIM-Manycore-SST/src/sst/elements/golem/tests
 ```
 
-第二阶段需要解决两个工程问题：
+该检查覆盖以下硬件侧解耦点：
 
-1. `run_noc_dma_pipeline.sh` 是否允许外部 artifact root 下已有 contracts 被复用。
-2. 是否需要新增一个轻量 wrapper，例如 `examples/run_golem_sst_smoke.sh`，避免直接修改硬件仓库主脚本。
+| 解耦点 | 硬件侧位置 | 作用 |
+|--------|------------|------|
+| 外部 artifact root | `run_noc_dma_pipeline.sh` 的 `GOLEM_ARTIFACT_ROOT` | 允许 codegen 输出目录独立于硬件仓库 |
+| matmul env contract | `GOLEM_MATMUL_M/N/K`、`GOLEM_MATMUL_BLOCK_*`、`GOLEM_MATMUL_DTYPE`、layout、transpose | 将矩阵语义从脚本内部默认值中解耦 |
+| legacy GEMM env alias | `GOLEM_GEMM_*` 与 `GOLEM_MATMUL_*` 的互通 | 兼容现有脚本和 runtime 编译宏 |
+| resolved contract | `contracts/matmul_op_desc_resolved.json` | 保存已经解析后的 matmul 参数 |
+| env mapping contract | `contracts/matmul_env_mapping_v1.json` | 固化 contract 字段到 env 变量的映射 |
+| HBM generator contract reader/writer | `tools/gen_hbm_init.py` | 根据 env/contract 生成 HBM layout，并写出 contract |
+| runtime env reader | `small/mvm_noc_int_array/test_noc_dma.cpp` | runtime 启动时读取 `GOLEM_MATMUL_*` |
+| compile-time fallback macros | `pipeline_config.h` | 保留硬件默认宏，同时允许脚本注入覆盖 |
 
-验收标准：
+第一阶段导出文件仍可用于硬件侧 dry-run 检查：
+
+```bash
+python examples/gemm_ir.py \
+  --output /tmp/gemm.golem.cimtile.json \
+  --m 4096 --n 128 --k 4096 \
+  --bm 64 --bn 64 --bk 64 \
+  --mesh-w 4 --mesh-h 5 \
+  --pipeline-stages 1 \
+  --a-dtype fp32 --b-dtype fp32 --c-dtype fp32
+
+python examples/export_golem_sst.py \
+  /tmp/gemm.golem.cimtile.json \
+  --input-format cim-tileir-json \
+  --artifact-root /tmp/golem_codegen_artifacts
+
+bash examples/run_golem_sst_smoke.sh \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  -- \
+  --log codegen_smoke.log
+```
+
+`examples/run_golem_sst_smoke.sh` 默认追加 `--dry-run`，用于确认 `golem_sst.env`、`GOLEM_ARTIFACT_ROOT` 和 contracts 能被硬件脚本消费。只有显式加 `--execute` 时才运行完整 SST：
+
+```bash
+bash examples/run_golem_sst_smoke.sh \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --execute \
+  -- \
+  --log codegen_smoke.log
+```
+
+第二阶段已经解决的工程边界：
+
+1. `run_noc_dma_pipeline.sh` 可以通过 `GOLEM_ARTIFACT_ROOT` 消费外部 artifact root。
+2. `contracts/matmul_op_desc_resolved.json` 由 exporter 生成，并可作为硬件侧 HBM 复用兼容检查的兜底 contract。
+3. wrapper 位于 `examples/run_golem_sst_smoke.sh`，不直接修改硬件仓库主脚本。
+4. wrapper 默认 dry-run，降低误触发长仿真的风险。
+
+当前阶段验收标准：
+
+- `scripts/check_golem_hardware_contracts.py` 通过。
+- `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q` 通过。
+- `bash scripts/check_docs.sh` 通过。
+
+完整 SST 运行是后续可选后验验证，不作为当前阶段要求：
 
 - `Simulation is complete`
 - `VERIFY-C = PASS`
@@ -241,6 +344,22 @@ bash run_noc_dma_pipeline.sh
 - `ovec2gm`
 - `remote_store_c_tile`
 
+当前 MVP 已实现：
+
+- `tilelang_cim/golem_event_planner.py`
+- `build_golem_event_plan(ir, golem_backend_config)`
+- `examples/plan_golem_events.py`
+
+示例命令：
+
+```bash
+python examples/plan_golem_events.py \
+  /tmp/gemm.golem.cimtile.json \
+  --output /tmp/gemm.golem_event_plan.json
+```
+
+当前输出是 Golem 语义映射计划，不是 cycle model。它对齐 `pipeline_config.h` / `gen_hbm_init.py` 的 macro-task、worker core、data node、A/B packed-once base、C output slot 和 reuse offset 公式。
+
 ## 第四阶段：stats-based 校准
 
 当硬件 smoke 能稳定运行后，再用 SST stats 校准 event plan：
@@ -261,10 +380,11 @@ bash run_noc_dma_pipeline.sh
 
 ## 推荐阶段顺序
 
-1. TileLang / CIM-TileIR 到 Golem SST env/contract exporter
-2. Golem 后端约束校验
-3. `run_noc_dma_pipeline.sh` 参数注入 smoke
-4. Golem-aware task/event plan
-5. stats-based 性能解释与校准
-6. extractor / TileOPs-like 扩展
-7. runtime ABI / ELF 长期闭环
+1. 补齐 `CIM-TileIR` 作为统一前后端接口所需的 layout / transpose 字段
+2. `CIM-TileIR -> Golem SST env/contract exporter`
+3. Golem 后端约束校验
+4. `run_noc_dma_pipeline.sh` 参数注入 smoke
+5. Golem-aware task/event plan
+6. stats-based 性能解释与校准
+7. extractor / TileOPs-like 扩展
+8. runtime ABI / ELF 长期闭环
