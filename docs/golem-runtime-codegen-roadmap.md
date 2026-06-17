@@ -46,6 +46,7 @@ CIM-TileIR 表达的参数能不能填进当前 Golem SST 后端？
 - `tilelang_cim/golem_exporter.py`：从 `CIM-TileIR` 导出 Golem SST env/contract artifacts。
 - `tilelang_cim/golem_constraints.py`：校验 `CIM-TileIR` 是否能落到当前 Golem SST 后端。
 - `tilelang_cim/golem_event_planner.py`：生成 Golem runtime 映射解释/debug plan。
+- `examples/run_tilelang_golem_e2e.sh`：一条命令执行 TileLang -> `CIM-TileIR` -> Golem artifacts -> validators -> SST smoke -> optional report。
 - `scripts/validate_golem_artifacts.py`：离线校验 exporter 产物自洽性。
 - `scripts/check_golem_mapping_consistency.py`：离线校验 resolved contract 与 Golem mapping/debug plan 一致性。
 
@@ -537,7 +538,7 @@ bash examples/run_golem_sst_smoke.sh \
 - `memory_queue_summary.csv`
 - `submit_ready_causal_summary.csv`
 
-首版 report 输出 `mode=golem_single_run_stats_report` 和 `model.status=not_calibrated`，只做单次运行的观测值汇总与派生指标，不做预测模型。
+首版 report 输出 `mode=golem_single_run_stats_report` 和 `model.status=not_calibrated`，只做单次运行的观测值汇总与派生指标，不做预测模型。它是当前项目的性能报告 MVP：输入来自真实 SST run 的 stats CSV 和 log，输出结构化 JSON，用于回答一次 codegen 生成配置在 SST 上跑出来的延迟、利用率、等待占比和主要瓶颈。
 
 当前 MVP 已实现：
 
@@ -569,6 +570,58 @@ python scripts/build_golem_single_run_report.py \
 
 当前不做 sweep、自动调参、多 run 聚合或图表生成。sweep 需要稳定的 single-run report 作为基础，在没有明确参数优化目标前会提前放大运行成本和维护复杂度。
 
+## 性能报告定位
+
+项目最终会有性能报告，但分阶段实现：
+
+1. 当前已完成：`golem_single_run_report.json`，面向单次真实 SST run，记录 correctness、mapping、stats、派生指标和 warning。
+2. 下一步可做：从 JSON 生成 Markdown/HTML 可读报告，突出关键结论，例如仿真时间、总 cycles、array utilization、system utilization、compute/prefetch/writeback/control 占比、cycles per task 和 artifact 路径。
+3. 当前不做：sweep、多 run 聚合、自动调参和性能预测模型。
+
+因此当前性能报告不是“调参平台”，而是一次端到端编译/运行结果的结构化解释报告。
+
+## 已完成首版：TileLang 到 Golem SST 一键端到端入口
+
+当前已经有分步命令可以验证 `CIM-TileIR -> Golem SST`，但用户最终需要的是从 TileLang 前端语言到 SST 执行的端到端流程。新增入口：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py
+```
+
+默认 dry-run，会在 `/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_<timestamp>` 下生成：
+
+- `tilelang_gemm.cimtile.json`
+- `golem_codegen_artifacts/golem_sst.env`
+- `golem_codegen_artifacts/contracts/matmul_op_desc_resolved.json`
+- `golem_codegen_artifacts/contracts/matmul_env_mapping_v1.json`
+- `gemm.golem_event_plan.json`
+- `golem_artifact_validation.json`
+- `golem_mapping_consistency.json`
+
+真实执行时：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --use-user-shell-env \
+  --execute
+```
+
+`--execute` 成功后，脚本会自动选择 artifact root 下最新 stats run 和最新 SST log，输出 `golem_single_run_report.json`。该入口仍遵守前后端边界：TileLang 只负责被解析到 `CIM-TileIR`，Golem SST backend exporter 才负责填充 `GOLEM_*` 和 contracts。
+
+真实执行成功记录：
+
+```text
+run_root=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443
+single_run_report=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_single_run_report.json
+SST log=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_codegen_artifacts/logs/tilelang_golem_smoke_run_20260617_193443_1637879.log
+stats_dir=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_codegen_artifacts/stats/overlap0/run_20260617_193443_1637879
+Simulation is complete, simulated time: 234.589 us
+[VERIFY-C] PASS dtype=fp32 sampled=1024 mismatches=0
+report.status=ok
+```
+
 ## 不推荐立即做的事情
 
 - 不建议把 `GolemArchitectureSpec` 作为第一阶段主产物。它会把问题带回硬件建模，而不是解决前端到 SST 参数填充。
@@ -585,7 +638,8 @@ python scripts/build_golem_single_run_report.py \
 4. 已完成：`run_noc_dma_pipeline.sh` 参数注入 dry-run smoke。
 5. 已完成：Golem-aware task mapping/debug plan。
 6. 已完成：No-SST-execute offline validation。
-7. 当前执行：codegen-driven hardware integration smoke。
-8. 下一阶段：single-run SST stats report。
-9. 后续：extractor / TileOPs-like 扩展。
-10. 长期目标：runtime ABI / ELF 闭环。
+7. 已完成：codegen-driven hardware integration smoke。
+8. 已完成首版：single-run SST stats report。
+9. 已完成首版：TileLang 到 Golem SST 一键端到端入口。
+10. 当前执行：extractor 泛化与 TileOPs-like 扩展。
+11. 长期目标：runtime ABI / ELF 闭环。

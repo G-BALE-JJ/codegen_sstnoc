@@ -1033,3 +1033,97 @@ warnings=[]
   - 初始运行 `TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_build_golem_single_run_report.py -q` 失败，原因是 `scripts.build_golem_single_run_report` 模块不存在。
   - 实现脚本后 targeted 测试通过。
   - 使用真实 run 生成 report 后，发现真实 event plan 使用 `stats` 字段、真实 execution CSV 无 `exec_` 前缀；已补兼容并重新验证。
+
+### 阶段 10：TileLang 到 Golem SST 一键端到端入口
+- **状态：**E2E smoke 完成，extractor 泛化继续
+- 用户需求：
+  - 项目需要支持“从 TileLang 前端语言到 SST 执行”的端到端流程。
+  - 入口应尽量是一条命令，不再要求用户手工串联 extractor、exporter、validator、mapping checker、SST wrapper 和 report。
+- 已执行的修改：
+  - 新增 `examples/run_tilelang_golem_e2e.sh`。
+  - 新增 `tests/test_run_tilelang_golem_e2e.py`，用 fake hardware pipeline 覆盖 dry-run 与 execute 两条路径，不启动真实 SST。
+  - 将默认 TileLang fixture 调整为当前 Golem SST smoke 规格：`M=1024, N=1024, K=128, BM=64, BN=64, BK=64`。
+  - 将 fixture dtype 写为 TileLang/TVM 可接受的 `float32`，由 Golem exporter 归一为 `fp32`。
+  - 修复 `tilelang_cim/extractor.py`：支持 `T.match_buffer` 没有显式 dtype 的 `PrimFunc.script()` 输出，默认按 `float32` 解析。
+  - 更新 `README.md`、`docs/golem-runtime-codegen-roadmap.md`、`task_plan.md`。
+- 新入口 dry-run：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py
+```
+
+- 新入口真实执行：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --use-user-shell-env \
+  --execute
+```
+
+- 输出目录：
+  - 默认 `run_root=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_<timestamp>`。
+  - dry-run 输出 `tilelang_gemm.cimtile.json`、`golem_codegen_artifacts/`、`gemm.golem_event_plan.json`、`golem_artifact_validation.json`、`golem_mapping_consistency.json`。
+  - `--execute` 成功后额外输出 `golem_single_run_report.json`。
+- TDD 记录：
+  - 初始运行 `TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_run_tilelang_golem_e2e.py -q` 失败，原因是 `examples/run_tilelang_golem_e2e.sh` 不存在。
+  - 实现脚本后新增端到端脚本测试通过。
+  - 调整 fixture 后，`extract_gemm_ir_from_tilelang(tilelang_gemm_fixture())` 暴露 `T.match_buffer` 无 dtype 的解析缺口；新增回归测试后修复 extractor。
+
+### 阶段 10：真实 TileLang -> SST E2E 执行记录
+- **状态：**成功
+- 执行命令：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --execute
+```
+
+- run root：
+  - `/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443`
+- 关键产物：
+  - `CIM-TileIR`：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/tilelang_gemm.cimtile.json`
+  - artifact root：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_codegen_artifacts`
+  - event plan：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/gemm.golem_event_plan.json`
+  - validation report：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_artifact_validation.json`
+  - mapping report：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_mapping_consistency.json`
+  - SST log：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_codegen_artifacts/logs/tilelang_golem_smoke_run_20260617_193443_1637879.log`
+  - stats dir：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_codegen_artifacts/stats/overlap0/run_20260617_193443_1637879`
+  - single-run report：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_single_run_report.json`
+- 成功证据：
+
+```text
+Simulation is complete, simulated time: 234.589 us
+[VERIFY-C] PASS dtype=fp32 sampled=1024 mismatches=0 max_abs_diff=0
+report.status=ok
+report.warnings=0
+```
+
+- report 关键结果：
+
+```text
+mode=golem_single_run_stats_report
+simulation_complete=true
+m_tiles=16
+n_tiles=16
+k_tiles=2
+total_gemm_tasks=256
+active_worker_cores=16
+total_cycles=2889.1875
+gemm_system_latency_cycles=5911.0
+array_utilization_pct=70.884981
+system_array_utilization_pct=34.647268
+cycles_per_gemm_task=11.285888671875
+compute_active_pct=73.10013628398988
+prefetch_wait_pct=26.276851190862484
+writeback_wait_pct=0.5537889112423475
+control_other_pct=0.06922361390529344
+system_vs_worker_utilization_gap_pct=36.237713
+```
+
+- 阶段结论：
+  - `TileLang source -> CIM-TileIR -> Golem SST artifacts -> real SST execution -> VERIFY-C -> stats -> performance report MVP` 已打通。
+  - 当前 `golem_single_run_report.json` 就是性能报告 MVP，面向单次真实运行的结构化性能解释。
+  - 后续可增加 Markdown/HTML 可读报告，但不引入 sweep、自动调参、多 run 聚合或性能预测模型。

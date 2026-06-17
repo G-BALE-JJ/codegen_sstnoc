@@ -116,18 +116,28 @@
 - [x] 计算 `compute_active_pct`、`prefetch_wait_pct`、`writeback_wait_pct`、`control_other_pct`
 - [x] 计算 `cycles_per_gemm_task`、`cycles_per_macro_task`、`system_vs_worker_utilization_gap_pct`
 - [x] 使用真实成功 run 生成 `/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_single_run_report.json`
+- [x] 明确该 JSON report 是当前性能报告 MVP：只解释单次真实 SST 运行，不做 sweep、预测模型或多 run 对比
 - **状态：**完成首版
 
-### 阶段 10：extractor 与 TileOPs-like smoke path
+### 阶段 10：TileLang 到 Golem SST E2E 与 extractor 扩展
+- [x] 新增 `examples/run_tilelang_golem_e2e.sh`
+- [x] 一条命令串起 `TileLang source -> CIM-TileIR -> Golem SST artifacts -> validators -> mapping checker -> run_golem_sst_smoke.sh`
+- [x] dry-run 默认只校验 artifacts 和硬件脚本参数注入，不运行完整 SST
+- [x] `--execute` 时自动查找最新 stats run 和 SST log，并生成 `golem_single_run_report.json`
+- [x] 默认 run root 放在 `/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_<timestamp>`
+- [x] 默认 TileLang fixture 调整为 Golem SST smoke 规格：`M=1024, N=1024, K=128, BM=64, BN=64, BK=64`
+- [x] extractor 支持 `T.match_buffer` 缺省 dtype 时按 `float32` 解析，兼容 TileLang `PrimFunc.script()` 输出
+- [x] 使用真实 SST 完成 `TileLang -> CIM-TileIR -> Golem SST -> VERIFY-C -> stats -> report` E2E run
+- [x] 记录成功 run：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443`
 - [ ] 减少 extractor 对 A/B/C 参数命名的依赖
-- [ ] 增加不同 dtype、默认 pipeline stages、不同变量命名的 fixture
+- [ ] 增加更多 dtype、默认 pipeline stages、不同变量命名的 fixture
 - [ ] 改进缺失 shared buffer、fragment buffer、`T.gemm`、静态 shape 的错误信息
 - [ ] 保持对动态 shape、转置 GEMM、复杂 fusion 的明确拒绝
 - [ ] 新增 TileOPs-like GEMM fixture
 - [ ] 验证 extractor 对简化 TileOPs GEMM 形态的支持边界
 - [ ] 对真实 TileOPs 复杂模式输出明确 unsupported reason
 - [ ] 不修改 `/data4/jjgong/TileOPs`
-- **状态：**未开始
+- **状态：**E2E smoke 完成，extractor 泛化继续
 
 ### 阶段 11：runtime ABI 与 ELF 长期闭环
 - [ ] 定义 runtime ABI，例如 `tl_core_id`、`tl_dma_load`、`tl_dma_store`、`tl_cim_gemm`
@@ -180,6 +190,8 @@ python examples/gemm_ir.py --output /data4/jjgong/tmp/codegen_sstnoc/gemm.cimtil
 #   tests/fixtures/tilelang_gemm_fixture.py \
 #   --input-format tilelang-source \
 #   --artifact-root /data4/jjgong/tmp/codegen_sstnoc/golem_codegen_artifacts
+# bash examples/run_tilelang_golem_e2e.sh \
+#   --tilelang-source tests/fixtures/tilelang_gemm_fixture.py
 # bash examples/run_golem_sst_smoke.sh \
 #   --artifact-root /data4/jjgong/tmp/codegen_sstnoc/golem_codegen_artifacts \
 #   -- \

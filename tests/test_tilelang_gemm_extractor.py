@@ -48,8 +48,33 @@ def test_extract_gemm_ir_from_tilelang_source():
 def test_extract_gemm_ir_from_python_function_source():
     ir = extract_gemm_ir_from_tilelang(tilelang_gemm_fixture(), mesh_w=4, mesh_h=2)
 
-    assert ir["tile"] == {"BM": 64, "BN": 64, "BK": 32}
+    assert ir["tile"] == {"BM": 64, "BN": 64, "BK": 64}
     assert ir["program"][1]["count"] == 2
+    assert ir["tensors"]["A"]["shape"] == [1024, 128]
+    assert ir["tensors"]["B"]["shape"] == [128, 1024]
+    assert ir["tensors"]["C"]["shape"] == [1024, 1024]
+
+
+def test_extract_gemm_ir_from_match_buffer_without_dtype_defaults_to_float32():
+    ir = extract_gemm_ir_from_source(
+        """
+from tvm.script import tir as T
+
+@T.prim_func
+def gemm(a_handle: T.handle, b_handle: T.handle, c_handle: T.handle):
+    a = T.match_buffer(a_handle, (1024, 128), strides=(128, 1))
+    b = T.match_buffer(b_handle, (128, 1024), strides=(1024, 1))
+    c = T.match_buffer(c_handle, (1024, 1024), strides=(1024, 1))
+    a_shared = T.alloc_buffer((64, 64), scope="shared.dyn")
+    b_shared = T.alloc_buffer((64, 64), scope="shared.dyn")
+    c_local = T.alloc_buffer((64, 64), scope="local.fragment")
+    for ko in T.serial(2, annotations={"num_stages": 2}):
+        T.gemm(a_shared, b_shared, c_local)
+"""
+    )
+
+    assert ir["tensors"]["A"]["shape"] == [1024, 128]
+    assert ir["tensors"]["A"]["dtype"] == "float32"
 
 
 def test_extract_gemm_ir_rejects_missing_tilelang_gemm():

@@ -31,6 +31,7 @@
 - `examples/export_golem_sst.py`：从 `CIM-TileIR JSON` 或 TileLang 源码导出 Golem SST env/contract artifacts。
 - `examples/plan_golem_events.py`：从 `CIM-TileIR JSON` 生成 Golem task mapping/debug plan。
 - `examples/run_golem_sst_smoke.sh`：将 exporter 生成的 artifacts 注入硬件侧 `run_noc_dma_pipeline.sh`，默认 dry-run。
+- `examples/run_tilelang_golem_e2e.sh`：一条命令串起 TileLang 源码、`CIM-TileIR`、Golem artifacts、离线校验、SST smoke 和可选 single-run report。
 - `scripts/check_golem_hardware_contracts.py`：静态审计硬件侧是否已经提供 env/contract 解耦入口。
 - `tests/`：CIM-TileIR 原型的 pytest 测试。
 - `docs/golem-runtime-codegen-roadmap.md`：对接 `RISC-V-CIM-Manycore-SST` Golem runtime 的当前路线。
@@ -90,6 +91,45 @@ python examples/extract_tilelang_gemm.py \
 当前 extractor 是第一版 MVP，只支持标准静态 GEMM 模板。它可以识别源码里的 `T.Tensor`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined`、`T.gemm`，也可以从 TileLang `PrimFunc.script()` 的 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 形态中提取同类信息；暂不支持任意动态 shape、复杂 fusion、转置 GEMM、复杂调度或完整 TileLang pass pipeline。
 
 当前 CIM 原型阶段的完整整理见 `docs/cim-tileir-prototype-summary.md`。Golem SST 硬件对齐后的下一步路线见 `docs/golem-runtime-codegen-roadmap.md`。新路线的重点是所有前端先落到 `CIM-TileIR`，再由 Golem SST backend exporter 生成 runtime contract：`golem_sst.env`、resolved matmul contract、env mapping 和 SST smoke 验证。Golem 硬件参数首版作为 backend exporter 的约束校验，不作为第一阶段主产物。
+
+推荐的 TileLang 到 Golem SST 端到端入口：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py
+```
+
+默认是 dry-run：它会生成 `CIM-TileIR JSON`、`golem_sst.env`、contracts、Golem mapping/debug plan，并运行 artifact validator、mapping consistency checker 和硬件 wrapper dry-run。默认 `run_root` 位于 `/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_<timestamp>`。
+
+确认当前 shell 已具备硬件脚本所需环境后，显式加 `--execute` 才运行真实 SST：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --execute
+```
+
+如果从 Codex、CI 或其他非交互 shell 启动，当前进程没有加载用户 `~/.bashrc`，可加：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --use-user-shell-env \
+  --execute
+```
+
+`--execute` 成功后，脚本会自动从 artifact root 下找到最新 `execution_summary.csv` 和最新 SST log，生成 `$RUN_ROOT/golem_single_run_report.json`。这个入口仍然不把 TileLang 直接耦合到 `GOLEM_*`：流程内部先落到 `CIM-TileIR`，再由 Golem backend exporter 生成 SST 运行环境。
+
+当前已有一次真实端到端成功记录：
+
+```text
+run_root=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443
+single_run_report=/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_single_run_report.json
+Simulation is complete, simulated time: 234.589 us
+[VERIFY-C] PASS dtype=fp32 sampled=1024 mismatches=0
+```
+
+`golem_single_run_report.json` 是当前性能报告 MVP。它不是 sweep 或调参报告，而是单次真实 SST 运行的结构化性能解释：包含 mapping、stats CSV 观测值、仿真完成状态、array utilization、system utilization、cycles per task、compute/prefetch/writeback/control 占比和 warning。后续可以在此基础上生成 Markdown/HTML 可读报告。
 
 导出 Golem SST artifacts：
 

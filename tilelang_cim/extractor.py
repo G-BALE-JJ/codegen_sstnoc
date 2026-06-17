@@ -148,13 +148,26 @@ def _collect_match_buffers(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols
         if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
             continue
         value = node.value
-        if not isinstance(value, ast.Call) or not _is_t_attr(value.func, "match_buffer") or len(value.args) < 3:
+        if not isinstance(value, ast.Call) or not _is_t_attr(value.func, "match_buffer") or len(value.args) < 2:
             continue
         shape = _eval_shape2(value.args[1], symbols)
-        dtype = _eval_dtype(value.args[2])
+        dtype = _eval_match_buffer_dtype(value)
         if shape is not None and dtype is not None:
             tensors[node.targets[0].id] = _TensorSpec(shape=shape, dtype=dtype)
     return tensors
+
+
+def _eval_match_buffer_dtype(node: ast.Call) -> str:
+    if len(node.args) >= 3:
+        dtype = _eval_dtype(node.args[2])
+        if dtype is not None:
+            return dtype
+    for keyword in node.keywords:
+        if keyword.arg == "dtype":
+            dtype = _eval_dtype(keyword.value)
+            if dtype is not None:
+                return dtype
+    return "float32"
 
 
 def _parse_tensor_annotation(annotation: ast.AST, symbols: dict[str, int]) -> _TensorSpec | None:
