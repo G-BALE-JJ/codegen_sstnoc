@@ -1,5 +1,7 @@
 # SST 首版 Codegen 技术设计
 
+> Legacy note: 本文档记录早期 TileLang C backend / SST target / RISC-V custom instruction 路线，不是当前实现主线。当前主线见 `../golem-runtime-codegen-roadmap.md`。
+
 ## 设计目标
 
 在 `tilelang` 中增加首版 SST 后端支持，使编译链能够：

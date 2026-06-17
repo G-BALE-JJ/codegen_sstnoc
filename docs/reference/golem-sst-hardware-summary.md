@@ -1,5 +1,7 @@
 # RISC-V CIM Manycore SST — 项目综合分析
 
+> Reference note: 本文档是 `/data4/jjgong/RISC-V-CIM-Manycore-SST` 硬件/运行时项目的分析总结，用作 Golem SST backend exporter 的硬件参考，不是 `codegen_sstnoc` 自身的进度总结。
+
 ## 一、项目概述
 
 本项目基于 **Sandia 国家实验室** 的 **SST (Structural Simulation Toolkit)** v15.0.0 框架，构建了一个 **RISC-V 多核处理器 + 模拟存算一体 (CIM/Processing-Using-Memory) 加速器** 的周期精确全系统仿真平台。项目核心目标是探索 **大规模 GEMM（矩阵乘法）** 在模拟 MVM (Matrix-Vector Multiplication) 阵列上的执行效率，重点研究数据移动瓶颈（data-movement bottleneck）、计算与通信的 overlap、以及 micro-tiling 调度策略对系统吞吐量的影响。

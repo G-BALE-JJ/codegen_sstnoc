@@ -561,3 +561,49 @@ python scripts/check_golem_hardware_contracts.py \
 - 目标测试：
   - `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests/test_golem_event_planner.py tests/test_plan_golem_events_example.py -q`
   - 结果：`4 passed`
+
+### 清理 toy architecture 与 abstract event planner
+- **状态：**完成
+- 背景：
+  - 用户确认当前已经接入真实 `RISC-V-CIM-Manycore-SST`，不需要继续维护 toy architecture。
+  - 用户认为 abstract event planner 对当前 SST 主线无直接价值，要求删除无关内容。
+- 已执行的操作：
+  - 删除 toy architecture 代码、示例、文档和测试。
+  - 删除 abstract event planner 代码、CLI、文档和测试。
+  - 从 `tilelang_cim/__init__.py` 移除已删除 API 的导出。
+  - 将 README、task plan、findings 和原型汇总文档同步到当前主线：
+    - `All frontends -> CIM-TileIR -> Golem SST backend exporter`
+    - `golem_event_plan` 保留为 Golem task mapping/debug/calibration 辅助产物，不作为 SST 必需输入。
+- 删除的主要文件：
+  - `tilelang_cim/architecture.py`
+  - `tilelang_cim/event_planner.py`
+  - `examples/architecture/toy_cim_mesh_v0.json`
+  - `examples/plan_events.py`
+  - `docs/cim-architecture-spec.md`
+  - `docs/cim-event-plan-schema.md`
+  - toy/abstract planner 对应测试文件。
+- 验证结果：
+  - `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q`
+  - 结果：`25 passed`
+  - `bash scripts/check_docs.sh`
+  - 结果：`基础文档检查通过。`
+
+### 项目整理：legacy/reference 归档
+- **状态：**已执行，待验证
+- 背景：
+  - 用户要求重新梳理项目，精简或整理多余内容。
+  - 当前代码主线已经收敛到 `All frontends -> CIM-TileIR -> Golem SST backend exporter`。
+- 已执行的操作：
+  - 将旧 SST C codegen 路线文档归档到 `docs/legacy/`。
+  - 将早期 TileLang/RISC-V CIM backend 规划归档到 `docs/legacy/`。
+  - 将硬件项目总结从根目录移动到 `docs/reference/golem-sst-hardware-summary.md`。
+  - 将旧 PPT 源文件移动到 `docs/legacy/`。
+  - 将旧 PPT 导出脚本改名为 `scripts/export_legacy_sst_ppt.sh`，并指向 `docs/legacy/`。
+  - 更新 `WORKFLOW.md`、`docs/README.md` 和 ADR，明确 `codegen_sstnoc` 是当前原型工作区，`tilelang/` 和硬件仓库默认只读。
+  - 更新 `README.md` 和 `findings.md` 中的 legacy/reference 路径。
+- 缓存清理：
+  - 发现 `.pytest_cache/`、`tests/__pycache__/`、`tests/fixtures/__pycache__/`、`tilelang_cim/__pycache__/`。
+  - 删除命令被审批层拒绝，未绕过执行；这些目录已由 `.gitignore` 覆盖，不影响测试和项目逻辑。
+- 待验证：
+  - `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q`
+  - `bash scripts/check_docs.sh`

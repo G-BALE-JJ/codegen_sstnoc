@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOC_DIR="${ROOT_DIR}/docs"
+DOC_DIR="${ROOT_DIR}/docs/legacy"
 
 soffice --headless --convert-to pptx --outdir "${DOC_DIR}" "${DOC_DIR}/sst-codegen-tech-route.fodp"
 

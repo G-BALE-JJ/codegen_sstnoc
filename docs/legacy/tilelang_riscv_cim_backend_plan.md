@@ -1,5 +1,7 @@
 # TileLang 与 RISC-V CIM 2D-Mesh Programming Model 衔接方案
 
+> Legacy note: 本文档记录早期 TileLang/RISC-V CIM 规划，包含已经废弃的 abstract event planner、toy architecture spec 和 architecture-aware planner 路线。当前主线见 `../golem-runtime-codegen-roadmap.md` 和 `../cim-tileir-prototype-summary.md`。
+
 ## 1. 目标定位
 
 本方案描述一条从 TileLang tile-level programming model 逐步扩展到 RISC-V CIM 2D-mesh 后端的路线。当前项目只有 `tilelang` 和 `TileOPs` 相关源码，尚无 CIM 架构源码、simulator、OS loader、RISC-V runtime 或 ELF 工具链集成。因此，本方案将近期目标收敛为：
@@ -268,7 +270,7 @@ tlcim.export_json(ir, "gemm.cimtile.json")
 - barrier 粒度；第一阶段可先不支持。
 - cycle model 是常数估算、公式估算还是表驱动估算。
 
-没有这份规格，event planner 只能输出事件骨架，不能输出可信的 legality / cycle / performance 结论。当前阶段汇总和 architecture spec 字段清单见 `docs/cim-tileir-prototype-summary.md`。
+没有这份规格，event planner 只能输出事件骨架，不能输出可信的 legality / cycle / performance 结论。当前阶段汇总见 `../cim-tileir-prototype-summary.md`。
 
 ### 5.4 第 3 阶段：abstract event expander / architecture-aware planner
 
