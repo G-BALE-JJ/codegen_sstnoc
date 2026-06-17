@@ -589,7 +589,7 @@ python scripts/check_golem_hardware_contracts.py \
   - 结果：`基础文档检查通过。`
 
 ### 项目整理：legacy/reference 归档
-- **状态：**已执行，待验证
+- **状态：**完成
 - 背景：
   - 用户要求重新梳理项目，精简或整理多余内容。
   - 当前代码主线已经收敛到 `All frontends -> CIM-TileIR -> Golem SST backend exporter`。
@@ -604,6 +604,432 @@ python scripts/check_golem_hardware_contracts.py \
 - 缓存清理：
   - 发现 `.pytest_cache/`、`tests/__pycache__/`、`tests/fixtures/__pycache__/`、`tilelang_cim/__pycache__/`。
   - 删除命令被审批层拒绝，未绕过执行；这些目录已由 `.gitignore` 覆盖，不影响测试和项目逻辑。
-- 待验证：
+- 验证结果：
   - `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q`
+  - 结果：`25 passed`
   - `bash scripts/check_docs.sh`
+  - 结果：`基础文档检查通过。`
+
+### 阶段 7：No-SST-execute offline artifact validation
+- **状态：**完成 MVP
+- 背景：
+  - 用户反馈当前 `run_noc_dma_pipeline.sh` 存在技术问题，真实硬件测试暂时无法进行。
+  - 当前阶段不应被完整 SST execute 阻塞，应先验证 codegen 生成的 env/contract artifacts 是否自洽。
+- 已执行的操作：
+  - 新增 `scripts/validate_golem_artifacts.py`。
+  - 新增 `validate_golem_artifacts(artifact_root, hardware_tests_dir=None)` API。
+  - 支持 CLI：
+
+```bash
+python scripts/validate_golem_artifacts.py \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --output /tmp/golem_artifact_validation.json
+```
+
+  - 校验内容：
+    - `golem_sst.env` 存在。
+    - `contracts/matmul_op_desc_resolved.json` 存在。
+    - `contracts/matmul_env_mapping_v1.json` 存在。
+    - `GOLEM_MATMUL_*` env 与 resolved contract 一致。
+    - `GOLEM_ARRAY_INPUT_SIZE`、`GOLEM_ARRAY_OUTPUT_SIZE`、`GOLEM_NUM_ARRAYS` 与 block shape 一致。
+    - legacy `GOLEM_GEMM_*` alias 与 `GOLEM_MATMUL_*` 一致。
+  - 新增 `tests/test_validate_golem_artifacts.py`。
+  - 更新 `README.md`、`task_plan.md` 和 `docs/golem-runtime-codegen-roadmap.md`。
+- TDD 记录：
+  - 先运行 `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests/test_validate_golem_artifacts.py -q`。
+  - 初始结果：失败，`ModuleNotFoundError: No module named 'scripts.validate_golem_artifacts'`。
+  - 实现脚本后目标测试结果：`4 passed`。
+- 最终验证：
+  - `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q`
+  - 结果：`29 passed`
+  - `bash scripts/check_docs.sh`
+  - 结果：`基础文档检查通过。`
+  - CLI 链路：
+
+```bash
+python examples/gemm_ir.py \
+  --output /tmp/gemm.golem.cimtile.json \
+  --m 4096 --n 128 --k 4096 \
+  --bm 64 --bn 64 --bk 64 \
+  --mesh-w 4 --mesh-h 5 \
+  --pipeline-stages 1 \
+  --a-dtype fp32 --b-dtype fp32 --c-dtype fp32
+
+python examples/export_golem_sst.py \
+  /tmp/gemm.golem.cimtile.json \
+  --input-format cim-tileir-json \
+  --artifact-root /tmp/golem_codegen_artifacts
+
+python scripts/validate_golem_artifacts.py \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --output /tmp/golem_artifact_validation.json
+```
+
+  - 结果：validation report 中 `ok=true`，所有 checks 为 `ok`。
+
+### 阶段 7：Golem mapping consistency check
+- **状态：**完成 MVP
+- 背景：
+  - 在真实 SST execute 不可用时，需要继续强化离线闭环。
+  - artifact validator 证明 exporter 产物自洽；mapping consistency check 进一步证明 resolved contract 与 `golem_event_plan` 映射语义一致。
+- 已执行的操作：
+  - 新增 `scripts/check_golem_mapping_consistency.py`。
+  - 新增 `check_golem_mapping_consistency(artifact_root, event_plan)` API。
+  - 支持 CLI：
+
+```bash
+python scripts/check_golem_mapping_consistency.py \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --event-plan /tmp/gemm.golem_event_plan.json \
+  --output /tmp/golem_mapping_consistency.json
+```
+
+  - 校验内容：
+    - event plan header 为 `mode=golem_event_plan`、`backend=golem_sst`。
+    - `m_tiles/n_tiles/k_tiles` 与 resolved contract 的 `m/n/k` 和 `block_m/block_n/block_k` 一致。
+    - `len(tasks)` 等于 `total_gemm_tasks`。
+    - `worker_core`、`worker_slot`、`data_node_idx`、`macro_task_id` 等字段在合法范围内。
+    - `a_base_mm`、`b_pack_base_mm`、`c_base_mm` 存在且非负。
+    - Golem 语义事件中的地址引用与 task base address 一致。
+  - 新增 `tests/test_check_golem_mapping_consistency.py`。
+  - 更新 `README.md`、`task_plan.md` 和 `docs/golem-runtime-codegen-roadmap.md`。
+- TDD 记录：
+  - 先运行 `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests/test_check_golem_mapping_consistency.py -q`。
+  - 初始结果：失败，`ModuleNotFoundError: No module named 'scripts.check_golem_mapping_consistency'`。
+  - 实现脚本后目标测试结果：`4 passed`。
+- 最终验证：
+  - `TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q`
+  - 结果：`33 passed`
+  - `bash scripts/check_docs.sh`
+  - 结果：`基础文档检查通过。`
+  - CLI 链路：
+
+```bash
+python examples/gemm_ir.py \
+  --output /tmp/gemm.golem.cimtile.json \
+  --m 4096 --n 128 --k 4096 \
+  --bm 64 --bn 64 --bk 64 \
+  --mesh-w 4 --mesh-h 5 \
+  --pipeline-stages 1 \
+  --a-dtype fp32 --b-dtype fp32 --c-dtype fp32
+
+python examples/export_golem_sst.py \
+  /tmp/gemm.golem.cimtile.json \
+  --input-format cim-tileir-json \
+  --artifact-root /tmp/golem_codegen_artifacts
+
+python examples/plan_golem_events.py \
+  /tmp/gemm.golem.cimtile.json \
+  --output /tmp/gemm.golem_event_plan.json
+
+python scripts/check_golem_mapping_consistency.py \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --event-plan /tmp/gemm.golem_event_plan.json \
+  --output /tmp/golem_mapping_consistency.json
+```
+
+  - 结果：mapping consistency report 中 `ok=true`，`plan_header`、`tile_counts_match_contract`、`task_count_matches_tiles`、`task_fields_in_range`、`base_addresses_present`、`event_address_refs` 均为 `ok`。
+
+### 规划调整：硬件可运行后的下一阶段
+- **状态：**完成文档调整
+- 背景：
+  - 用户确认硬件侧 `run_noc_dma_pipeline.sh` 现在已经可以运行。
+  - 用户指出目前还没有做 codegen-driven 硬件接入测试。
+  - 用户明确当前不做 sweep。
+- 已执行的文档调整：
+  - 将当前阶段改为 `阶段 8：codegen-driven hardware integration smoke`。
+  - 将 stats report 顺延为 `阶段 9：single-run SST stats report`。
+  - 将 extractor / TileOPs-like smoke path 顺延为阶段 10。
+  - 将 runtime ABI / ELF 长期闭环顺延为阶段 11。
+  - 在 `task_plan.md` 中增加手动硬件接入 smoke 验收步骤：
+    - codegen 生成 `CIM-TileIR JSON`。
+    - exporter 生成 `/tmp/golem_codegen_artifacts`。
+    - artifact validator 通过。
+    - Golem event plan 生成。
+    - mapping consistency checker 通过。
+    - `examples/run_golem_sst_smoke.sh --execute` 真实运行。
+    - 验证 `Simulation is complete`、`VERIFY-C = PASS` 和 stats CSV 生成。
+  - 在 `README.md` 和 `docs/golem-runtime-codegen-roadmap.md` 中补充 codegen-driven hardware integration smoke 用法。
+  - 明确当前不做 sweep、自动调参、多 run 聚合或预测模型。
+- 本次只修改文档，未运行真实硬件接入测试。
+
+### 规划文档整理：当前阶段聚焦 codegen-driven hardware smoke
+- **状态：**完成文档调整
+- 背景：
+  - 用户要求“先修改文档”。
+  - 当前硬件默认脚本已经可运行，但 `codegen_sstnoc` 生成 artifacts 驱动真实 SST 的接入测试尚未执行。
+- 已执行的文档调整：
+  - 更新 `docs/golem-runtime-codegen-roadmap.md`，将旧的“第一阶段/第二阶段”历史口吻整理为“已完成 / 当前阶段 / 下一阶段”。
+  - 明确当前阶段是 `codegen-driven hardware integration smoke`。
+  - 明确该阶段验收重点是 `CIM-TileIR JSON -> Golem SST artifacts -> validator -> mapping checker -> run_golem_sst_smoke.sh --execute -> 真实 run_noc_dma_pipeline.sh`。
+  - 明确需要记录 artifact root、validation report、mapping report、硬件 log、stats-dir、`Simulation is complete` 和 `VERIFY-C = PASS`。
+  - 保留 single-run SST stats report 作为 smoke 通过后的下一阶段。
+  - 保留“不做 sweep”的决策。
+- 本次仍只修改文档，未运行真实硬件接入测试。
+
+### 阶段 8：codegen-driven hardware integration smoke 尝试
+- **状态：**部分完成，完整 SST run 被当前执行环境阻塞
+- 已执行的操作：
+  - 生成与硬件默认配置一致的 `CIM-TileIR JSON`：
+
+```bash
+python examples/gemm_ir.py \
+  --output /tmp/gemm.golem.cimtile.json \
+  --m 1024 --n 1024 --k 1024 \
+  --bm 64 --bn 64 --bk 64 \
+  --mesh-w 4 --mesh-h 5 \
+  --pipeline-stages 1 \
+  --a-dtype fp32 --b-dtype fp32 --c-dtype fp32
+```
+
+  - 导出 Golem SST artifacts：
+
+```bash
+python examples/export_golem_sst.py \
+  /tmp/gemm.golem.cimtile.json \
+  --input-format cim-tileir-json \
+  --artifact-root /tmp/golem_codegen_artifacts
+```
+
+  - 生成文件：
+    - `/tmp/golem_codegen_artifacts/golem_sst.env`
+    - `/tmp/golem_codegen_artifacts/contracts/matmul_op_desc_resolved.json`
+    - `/tmp/golem_codegen_artifacts/contracts/matmul_env_mapping_v1.json`
+  - 运行 artifact validator：
+
+```bash
+python scripts/validate_golem_artifacts.py \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --output /tmp/golem_artifact_validation.json
+```
+
+    - 结果：`ok=true`
+  - 生成 Golem task mapping/debug plan：
+
+```bash
+python examples/plan_golem_events.py \
+  /tmp/gemm.golem.cimtile.json \
+  --output /tmp/gemm.golem_event_plan.json
+```
+
+  - 运行 mapping consistency checker：
+
+```bash
+python scripts/check_golem_mapping_consistency.py \
+  --artifact-root /tmp/golem_codegen_artifacts \
+  --event-plan /tmp/gemm.golem_event_plan.json \
+  --output /tmp/golem_mapping_consistency.json
+```
+
+    - 结果：`ok=true`
+- 硬件 smoke 尝试记录：
+  - 首次直接运行时，`riscv64-linux-musl-g++` 解析不到用户 `.bashrc` 中的工具链路径，编译阶段失败。
+  - 改用 `/data4/jjgong/local/packages/riscv64_musl_toolchain/bin` 后，编译器可执行，但 assembler 不认识 Golem 自定义指令，例如 `mvm.ovec2gm`、`remote.st`。
+  - 改用用户 `.bashrc` 中的工具链路径 `/data/lzq/packages/install/riscv64_musl_toolchain/bin` 后，RISC-V test binary 编译通过。
+  - 使用完整环境：
+
+```bash
+PATH=/data4/jjgong/local/sstcore/bin:/data/lzq/packages/install/riscv64_musl_toolchain/bin:$PATH
+LD_LIBRARY_PATH=/data4/jjgong/miniconda3/lib:/data4/jjgong/local/sstcore/lib:$LD_LIBRARY_PATH
+```
+
+    - HBM 初始化通过。
+    - RISC-V test binary 编译通过。
+    - SST 启动阶段失败，日志路径：
+      `/tmp/golem_codegen_artifacts/logs/codegen_smoke_fullenv_run_20260617_162641_2.log`
+    - 失败原因：
+
+```text
+opal_ifinit: socket() failed with errno=1
+No network interfaces were found for out-of-band communications.
+MPI_INIT failed
+```
+
+  - 该错误发生在 OpenMPI/SST 启动阶段，当前证据显示不是 codegen artifact、contract、HBM layout 或 RISC-V 编译问题。
+  - 用户已允许非沙箱重跑，但 `require_escalated` 请求被审批层 503 拒绝，无法在本轮由 Codex 继续完成真实 SST run。
+- 当前产物路径：
+  - `CIM-TileIR JSON`：`/tmp/gemm.golem.cimtile.json`
+  - artifact root：`/tmp/golem_codegen_artifacts`
+  - artifact validation report：`/tmp/golem_artifact_validation.json`
+  - Golem mapping/debug plan：`/tmp/gemm.golem_event_plan.json`
+  - mapping consistency report：`/tmp/golem_mapping_consistency.json`
+  - 最近失败 log：`/tmp/golem_codegen_artifacts/logs/codegen_smoke_fullenv_run_20260617_162641_2.log`
+
+### 临时目录迁移：避免 `/tmp` HBM mmap backing file 触发 Bus error
+- **状态：**完成实现与文档调整
+- 背景：
+  - 用户在终端手动运行 codegen-driven hardware smoke 后，SST 进入架构初始化阶段，但在 `memHierarchy::Backend::BackingMMAP` 处触发 `Bus error`。
+  - 现场检查显示 `/tmp` 所在根分区可用空间仅约 49MB，而 codegen smoke 的 HBM backing files 至少包含 4 个 `hbm_init_node*.bin` 和 4 个 `hbm_out_node*.bin`，每个约 128MB。
+  - 因此 `/tmp/golem_codegen_artifacts` 不适合作为真实 SST smoke 的 artifact root。
+- 已执行的修改：
+  - 修改 `examples/run_golem_sst_smoke.sh`，不传 `--artifact-root` 时默认使用 `/data4/jjgong/tmp/codegen_sstnoc/golem_codegen_artifacts`。
+  - 新增 `tests/test_run_golem_sst_smoke.py` 覆盖默认 artifact root。
+  - 将 README、task plan、Golem roadmap 和 CIM-TileIR prototype summary 中的当前运行示例迁移到 `/data4/jjgong/tmp/codegen_sstnoc`。
+  - 将测试命令中的 `TILELANG_CACHE_DIR` 示例改为 `/data4/jjgong/tmp/tilelang-cache`。
+- TDD 记录：
+  - 先运行 `TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_run_golem_sst_smoke.py -q`。
+  - 初始结果：失败，`[ERROR] --artifact-root is required`。
+  - 实现 wrapper 默认 artifact root 后，目标测试结果：`3 passed`。
+
+### 阶段 8 shape 调整与 sample tensor 来源确认
+- **状态：**完成
+- 背景：
+  - 用户认为原先 `M=4096, N=128, K=4096` 对当前 smoke 太大，要求改为 `M=1024, N=1024, K=128`。
+  - 用户询问硬件脚本中 `Using external tensor files: A=.../data/a.bin, B=.../data/b.bin` 的 tensor 来源。
+- 已执行的修改：
+  - 将当前 README、Golem roadmap、CIM-TileIR summary 和 wrapper smoke 测试中的推荐 Golem smoke shape 改为 `M=1024, N=1024, K=128`。
+  - 保留部分单元测试中的 `4096/128/4096` 形状作为公式和 validator 测试夹具，不把历史测试全部改成当前 smoke 规模。
+  - 重新生成 `/data4/jjgong/tmp/codegen_sstnoc` 下的 codegen artifacts。
+- dry-run 验证：
+
+```text
+GOLEM_GEMM_M=1024
+GOLEM_GEMM_N=1024
+GOLEM_GEMM_K=128
+GOLEM_GEMM_K_TILES(derived)=2
+GOLEM_TENSOR_SOURCE=sample
+python3 tools/gen_sample_tensors.py --m 1024 --n 1024 --k 128 --dtype fp32 --a-out .../data/a.bin --b-out .../data/b.bin
+```
+
+- tensor 来源结论：
+  - 当前硬件默认 `50_tensor_verify.env` 设置 `GOLEM_TENSOR_SOURCE=sample`。
+  - `run_noc_dma_pipeline.sh` 在 sample 模式下调用 `tools/gen_sample_tensors.py`，生成 `data/a.bin` 和 `data/b.bin`。
+  - `gen_sample_tensors.py` 生成确定性样例矩阵：
+    - `A[i,j] = ((i * 3 + j * 5) % 17) - 8`
+    - `B[i,j] = ((i * 7 + j * 2) % 19) - 9`
+  - 当前 dtype 为 `fp32` 时，脚本把这些整数样例值转换为 float32 二进制写入文件。
+
+### Golem smoke wrapper 运行环境边界修正
+- **状态：**完成
+- 背景：
+  - 用户指出硬件测试环境变量已经存在于硬件脚本和用户 `~/.bashrc` 中，codegen wrapper 不应该要求额外复制 PATH/LD_LIBRARY_PATH。
+  - 根因确认：用户 `~/.bashrc` 开头有交互 shell 判断，非交互 shell 会提前 `return`，因此 Codex/CI 这类启动方式可能没有加载后续 SST/toolchain 环境。
+- 已执行的修改：
+  - `examples/run_golem_sst_smoke.sh` 新增 `--use-user-shell-env`，在非交互场景下通过交互 bash 重入，让 `~/.bashrc` 中的用户环境生效。
+  - wrapper 调用硬件脚本前检查 `sst` 和 `riscv64-linux-musl-g++` 是否可见；缺失时给出明确提示，而不是让硬件脚本在后续阶段隐式失败。
+  - wrapper 仍然不硬编码 SST、RISC-V toolchain、DRAMSim3 或 `LD_LIBRARY_PATH`；它只负责 source codegen 生成的 `golem_sst.env` 并导出 `GOLEM_ARTIFACT_ROOT`。
+  - 更新 README、WORKFLOW 和 Golem roadmap，明确本地交互终端可直接运行 wrapper，Codex/CI/非交互 shell 可加 `--use-user-shell-env`。
+- TDD 记录：
+  - 先新增 `tests/test_run_golem_sst_smoke.py` 用例覆盖 `--use-user-shell-env` 重入和缺失 runtime tools 的错误提示。
+  - 初始结果：新增用例失败，wrapper 不认识 `--use-user-shell-env`，且未检查 `sst/riscv64-linux-musl-g++`。
+  - 实现后 targeted 验证：`TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_run_golem_sst_smoke.py -q`，结果 `5 passed`。
+
+### 重新执行 codegen-driven smoke 测试
+- **状态：**离线链路与硬件前置阶段通过，SST execute 仍受当前 Codex 沙箱 OpenMPI 限制
+- 本次 run root：
+  - `/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346`
+- 已执行并通过：
+  - 生成 `gemm.golem.cimtile.json`
+  - 导出 `golem_codegen_artifacts/golem_sst.env`
+  - 导出 `contracts/matmul_op_desc_resolved.json`
+  - 导出 `contracts/matmul_env_mapping_v1.json`
+  - `scripts/validate_golem_artifacts.py`：`ok=true, errors=0, warnings=0`
+  - `examples/plan_golem_events.py`
+  - `scripts/check_golem_mapping_consistency.py`：`ok=true, errors=0, warnings=0`
+  - wrapper dry-run：确认 `GOLEM_GEMM_M=1024, GOLEM_GEMM_N=1024, GOLEM_GEMM_K=128`
+  - HBM 初始化：生成 4 个 `hbm_init_node*.bin` 和 4 个 `hbm_out_node*.bin`，每个 128MB
+  - RISC-V test binary 编译：生成静态链接 RISC-V ELF
+- 本次执行中发现并修复：
+  - `--use-user-shell-env` 重入时直接 exec 脚本文件，若脚本没有 executable bit 会失败；已改为通过 `bash "$0" ...` 重入。
+  - 当前用户 shell 中 `CONDA_PREFIX=/data4/jjgong/miniconda3`，但 `LD_LIBRARY_PATH` 未包含 `$CONDA_PREFIX/lib`，导致 `sst` 缺 `libpython3.13.so.1.0`；wrapper 已在存在 `CONDA_PREFIX/lib` 时自动补入 `LD_LIBRARY_PATH`。
+  - 新增对应单测后，`tests/test_run_golem_sst_smoke.py` 结果为 `6 passed`。
+- 当前剩余 execute 失败点：
+  - 最新日志：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/logs/full_smoke_execute_after_conda_lib_run_20260617_173739_2.log`
+  - 失败内容：
+
+```text
+opal_ifinit: socket() failed with errno=1
+No network interfaces were found for out-of-band communications.
+MPI_INIT failed
+```
+
+  - 结论：当前失败点是 Codex 沙箱对 OpenMPI/socket 的限制；codegen artifact、env/contract、HBM 初始化和 RISC-V 编译均已通过。
+- 验证：
+  - `TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests -q`：`37 passed`
+  - `bash scripts/check_docs.sh`：通过
+
+### 阶段 8：codegen-driven hardware integration smoke 成功收口
+- **状态：**完成
+- 用户在正常终端中完成真实 SST run。
+- run root：
+  - `/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346`
+- 成功日志：
+  - `/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/logs/full_smoke_execute_terminal_run_20260617_174010_1201356.log`
+- stats 目录：
+  - `/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/stats/overlap0/run_20260617_174010_1201356`
+- 关键结果：
+
+```text
+Simulation is complete, simulated time: 234.589 us
+total_cycles=2889.187500
+worker_avg_total_cycles=2889.187500
+gemm_system_latency_cycles=5911.000000
+exec_array_utilization_pct=70.884981
+exec_system_array_utilization_pct=34.647268
+```
+
+- 已生成 stats：
+  - `execution_summary.csv`
+  - `dma_summary.csv`
+  - `noc_summary.csv`
+  - `memory_summary.csv`
+  - `memory_queue_summary.csv`
+  - `submit_ready_causal_summary.csv`
+  - 额外生成：`execution_debug_summary.csv`、`noc_latency_summary.csv`、`noc_hotspot_summary.csv`、`sched_pressure_summary.csv` 等。
+- 关于 `VERIFY-C`：
+  - 硬件脚本在 `VERIFY_C=1` 时调用 `verify/verify_c_against_golden.py`。
+  - `[VERIFY-C] PASS` 输出到终端 stdout，不写入 SST log 文件。
+  - 当前 run 能继续导出完整 stats 和 `run_summary.csv`，说明 verify 后处理没有失败；若 verify 失败，脚本会因 `set -e` 中止。
+- 阶段结论：
+  - `CIM-TileIR -> Golem SST exporter -> env/contract artifacts -> run_golem_sst_smoke.sh -> 真实 run_noc_dma_pipeline.sh -> SST complete -> stats CSV` 已打通。
+  - 下一阶段进入 `single-run SST stats report`，不做 sweep。
+
+### 阶段 9：single-run SST stats report MVP
+- **状态：**完成首版
+- 已执行的修改：
+  - 新增 `scripts/build_golem_single_run_report.py`。
+  - 新增 `tests/test_build_golem_single_run_report.py`。
+  - 更新 `task_plan.md`、`README.md`、`docs/golem-runtime-codegen-roadmap.md`。
+- report 输入：
+  - artifact root：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts`
+  - event plan：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/gemm.golem_event_plan.json`
+  - stats dir：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/stats/overlap0/run_20260617_174010_1201356`
+  - log：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/logs/full_smoke_execute_terminal_run_20260617_174010_1201356.log`
+- report 输出：
+  - `/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_single_run_report.json`
+- report 关键结果：
+
+```text
+mode=golem_single_run_stats_report
+status=ok
+model.status=not_calibrated
+m_tiles=16
+n_tiles=16
+k_tiles=2
+total_gemm_tasks=256
+active_worker_cores=16
+simulation_complete=true
+simulated_time=234.589 us
+total_cycles=2889.1875
+gemm_system_latency_cycles=5911.0
+array_utilization_pct=70.884981
+system_array_utilization_pct=34.647268
+cycles_per_gemm_task=11.285888671875
+cycles_per_macro_task=11.285888671875
+compute_active_pct=73.10013628398988
+prefetch_wait_pct=26.276851190862484
+writeback_wait_pct=0.5537889112423475
+control_other_pct=0.06922361390529344
+system_vs_worker_utilization_gap_pct=36.237713
+warnings=[]
+```
+
+- 实现边界：
+  - 只做单次真实运行的结构化观测和派生指标。
+  - stats CSV 缺失时输出 structured warnings，不直接崩溃。
+  - 输出 `model.status=not_calibrated`，不声称已有预测模型。
+  - 当前不做 sweep、自动调参、多 run 聚合或图表生成。
+- TDD 记录：
+  - 初始运行 `TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_build_golem_single_run_report.py -q` 失败，原因是 `scripts.build_golem_single_run_report` 模块不存在。
+  - 实现脚本后 targeted 测试通过。
+  - 使用真实 run 生成 report 后，发现真实 event plan 使用 `stats` 字段、真实 execution CSV 无 `exec_` 前缀；已补兼容并重新验证。

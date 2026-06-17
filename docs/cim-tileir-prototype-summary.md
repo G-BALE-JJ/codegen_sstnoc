@@ -166,8 +166,8 @@ Golem SST env/contract artifacts
 
 ```bash
 python examples/gemm_ir.py \
-  --output /tmp/gemm.golem.cimtile.json \
-  --m 4096 --n 128 --k 4096 \
+  --output /data4/jjgong/tmp/codegen_sstnoc/gemm.golem.cimtile.json \
+  --m 1024 --n 1024 --k 128 \
   --bm 64 --bn 64 --bk 64 \
   --mesh-w 4 --mesh-h 5 \
   --pipeline-stages 1 \
@@ -179,7 +179,7 @@ python examples/gemm_ir.py \
 ```bash
 python examples/extract_tilelang_gemm.py \
   tests/fixtures/tilelang_gemm_fixture.py \
-  --output /tmp/tilelang_gemm.cimtile.json \
+  --output /data4/jjgong/tmp/codegen_sstnoc/tilelang_gemm.cimtile.json \
   --mesh-w 4 --mesh-h 5
 ```
 
@@ -187,9 +187,9 @@ python examples/extract_tilelang_gemm.py \
 
 ```bash
 python examples/export_golem_sst.py \
-  /tmp/gemm.golem.cimtile.json \
+  /data4/jjgong/tmp/codegen_sstnoc/gemm.golem.cimtile.json \
   --input-format cim-tileir-json \
-  --artifact-root /tmp/golem_codegen_artifacts
+  --artifact-root /data4/jjgong/tmp/codegen_sstnoc/golem_codegen_artifacts
 ```
 
 静态审计硬件侧解耦入口：
@@ -203,14 +203,14 @@ python scripts/check_golem_hardware_contracts.py \
 
 ```bash
 python examples/plan_golem_events.py \
-  /tmp/gemm.golem.cimtile.json \
-  --output /tmp/gemm.golem_event_plan.json
+  /data4/jjgong/tmp/codegen_sstnoc/gemm.golem.cimtile.json \
+  --output /data4/jjgong/tmp/codegen_sstnoc/gemm.golem_event_plan.json
 ```
 
 运行测试：
 
 ```bash
-TILELANG_CACHE_DIR=/tmp/tilelang-cache python -m pytest tests -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests -q
 ```
 
 文档检查：
