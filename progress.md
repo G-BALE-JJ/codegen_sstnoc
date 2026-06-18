@@ -1127,3 +1127,108 @@ system_vs_worker_utilization_gap_pct=36.237713
   - `TileLang source -> CIM-TileIR -> Golem SST artifacts -> real SST execution -> VERIFY-C -> stats -> performance report MVP` 已打通。
   - 当前 `golem_single_run_report.json` 就是性能报告 MVP，面向单次真实运行的结构化性能解释。
   - 后续可增加 Markdown/HTML 可读报告，但不引入 sweep、自动调参、多 run 聚合或性能预测模型。
+
+### 阶段 10：extractor 去除 A/B/C 命名依赖
+- **状态：**完成
+- 目标：
+  - 支持 TileLang GEMM 参数不叫 `a/b/c` 或 `A/B/C` 的常见写法，例如 `lhs/rhs/out`。
+  - 保持 `CIM-TileIR` 输出仍然规范化为 `A/B/C` 三个 tensor。
+- 已执行的修改：
+  - 新增 `tests/test_tilelang_gemm_extractor.py::test_extract_gemm_ir_does_not_depend_on_abc_argument_names`。
+  - 修改 `tilelang_cim/extractor.py`，新增 `_infer_gemm_tensor_roles()`。
+  - 推断策略：
+    - 优先保留已有 `a/b/c` 或 `A/B/C` 快路径。
+    - 如果没有标准命名，则在所有 2D tensor 中寻找唯一满足 `A(M,K), B(K,N), C(M,N)` 的组合。
+    - 如果找到多个组合，报 `Unable to infer unique A/B/C tensor roles from GEMM tensor shapes`。
+    - 如果找不到组合，报 `A/B/C tensor annotations are required or must form A(M,K), B(K,N), C(M,N)`。
+- TDD 记录：
+  - 初始 targeted 测试失败，原因是 extractor 仍然只读取 `tensors["a"/"A"]`、`tensors["b"/"B"]`、`tensors["c"/"C"]`。
+  - 实现 shape-role 推断后，targeted 测试通过。
+- 已执行验证：
+
+```bash
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py::test_extract_gemm_ir_does_not_depend_on_abc_argument_names -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py tests/test_extract_tilelang_gemm_example.py -q
+```
+
+### 阶段 10：extractor 默认 pipeline 与动态 shape 错误信息
+- **状态：**完成
+- 已执行的修改：
+  - 新增默认 `T.Pipelined(...)` 无 `num_stages` 参数的 fixture 覆盖。
+  - 新增 `float32` + 非 `a/b/c` 命名组合的 extractor 覆盖。
+  - 新增动态 shape fixture，要求报出 `unsupported dynamic shape`。
+  - 修改 `tilelang_cim/extractor.py`：
+    - `T.Tensor((M, K), ...)` 这类非静态 shape 直接报 `unsupported dynamic shape: tensor shapes must be static integer pairs`。
+    - `T.Pipelined(T.ceildiv(K, 64))` 这类非静态循环次数报 `unsupported dynamic shape: T.Pipelined count must be a positive static integer`。
+- TDD 记录：
+  - 默认 pipeline fixture 直接通过，说明现有默认值行为已存在。
+  - 动态 shape 测试初始失败，实际错误是 `T.Pipelined count must be a positive static integer`，缺少明确的 unsupported dynamic shape 标识。
+  - 修改 extractor 后 targeted 测试通过。
+- 已执行验证：
+
+```bash
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py::test_extract_gemm_ir_defaults_pipeline_stages_to_one tests/test_tilelang_gemm_extractor.py::test_extract_gemm_ir_rejects_dynamic_tensor_shapes_with_clear_error -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py tests/test_extract_tilelang_gemm_example.py -q
+```
+
+### 阶段 10：TileOPs-like 普通 GEMM fixture
+- **状态：**完成普通非转置 GEMM 边界验证
+- 参考来源：
+  - 只读参考 `/data4/jjgong/TileOPs/tileops/kernels/gemm.py`。
+  - 不修改 `/data4/jjgong/TileOPs`。
+- 已执行的修改：
+  - 新增 `tests/fixtures/tileops_like_gemm_fixture.py`。
+  - 新增 `tests/test_tilelang_gemm_extractor.py::test_extract_tileops_like_gemm_fixture_exports_golem_artifacts`。
+  - 修改 `tilelang_cim/extractor.py`，将原来的 int-only symbol table 扩展为静态符号表：
+    - 支持模块级静态常量，例如 `M/N/K/DTYPE`。
+    - 支持外层工厂函数默认参数，例如 `block_m/block_n/block_k/num_stages/threads`。
+    - 支持二元 shape alias，例如 `a_shape = (M, K)`、`a_shared_shape = (block_m, block_k)`。
+    - 支持 dtype alias，例如 `DTYPE = "float32"`。
+  - TileOPs-like fixture 采用源码字符串，不执行 `@tilelang.jit`，避免测试阶段触发 CUDA/NVCC 编译。
+- 支持边界：
+  - 当前支持普通非转置 GEMM 的 TileOPs-like 形态。
+  - 可以忽略 `T.annotate_layout({})`、`T.use_swizzle(...)`、额外 `out_shared` 中转。
+  - 可以提取 `T.gemm(lhs_shared, rhs_shared, out_local, False, False)`。
+  - 可以导出 Golem artifacts。
+- 仍未支持：
+  - 转置 GEMM。
+  - grouped GEMM。
+  - fused activation / complex fusion。
+  - 真实 TileOPs 包路径直接执行或修改。
+- TDD 记录：
+  - 初始测试用真实 `@tilelang.jit` 调用会触发 CUDA/NVCC 编译，失败原因与 extractor 无关。
+  - 将 fixture 改为源码字符串后，暴露 extractor 对模块常量、外层默认参数、shape alias 和 dtype alias 的静态符号支持不足。
+  - 扩展静态符号表后，TileOPs-like fixture 测试通过。
+- 已执行验证：
+
+```bash
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py::test_extract_tileops_like_gemm_fixture_exports_golem_artifacts -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py tests/test_golem_exporter.py tests/test_validate_golem_artifacts.py -q
+```
+
+### 阶段 10：参数化 TileLang GEMM 源码生成器
+- **状态：**完成
+- 背景：
+  - 用户认为继续推进真实 TileOPs 复杂模式和 Markdown/HTML 报告暂时不是必要步骤。
+  - 当前更直接的需求是让实验入口可以从参数生成 TileLang 前端源码，再进入已有 `TileLang -> CIM-TileIR -> Golem SST` 端到端流程。
+- 已执行的修改：
+  - 新增 `examples/make_tilelang_gemm_source.py`。
+  - 默认生成已跑通 smoke 规格：`M=1024, N=1024, K=128, BM=64, BN=64, BK=64, dtype=float32, num_stages=2, threads=128`。
+  - 支持 CLI 参数：`--m/--n/--k`、`--bm/--bn/--bk`、`--dtype`、`--num-stages`、`--threads`、`--output`。
+  - 对正整数和 `M/N/K` 被 tile shape 整除做前置校验。
+  - 扩展 `examples/run_tilelang_golem_e2e.sh`：
+    - 新增 `--generate-tilelang-source`。
+    - 将生成源码写到 `$RUN_ROOT/generated_tilelang_gemm.py`。
+    - 后续仍走 `extract_tilelang_gemm.py -> CIM-TileIR JSON -> Golem exporter`，不把 CLI 参数直接写入 `GOLEM_*`。
+  - 新增 `tests/test_make_tilelang_gemm_source.py`，覆盖：
+    - 生成源码可被 extractor 解析。
+    - 默认生成结果可导出 Golem SST artifacts。
+    - E2E 脚本生成源码后可通过 fake hardware pipeline dry-run。
+- TDD 记录：
+  - 初始 targeted 测试失败，原因是 `examples/make_tilelang_gemm_source.py` 不存在，且 `run_tilelang_golem_e2e.sh` 不支持 `--generate-tilelang-source`。
+  - 实现生成器和脚本参数后，targeted 测试通过。
+- 已执行验证：
+
+```bash
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_make_tilelang_gemm_source.py -q
+```

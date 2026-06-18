@@ -34,7 +34,7 @@ def extract_gemm_ir_from_source(
         raise ValueError("No function definition was found")
 
     func = _select_tilelang_function(functions)
-    symbols = _collect_int_symbols(func)
+    symbols = _collect_static_symbols(tree, func)
     tensors = _collect_tensors(func, symbols)
     tensors.update(_collect_match_buffers(func, symbols))
     _require_gemm_call(func)
@@ -45,11 +45,7 @@ def extract_gemm_ir_from_source(
     fragment_shapes.extend(_collect_scoped_alloc_buffers(func, "local.fragment", symbols))
     pipeline = _find_pipeline(func, symbols)
 
-    a_shape = tensors.get("a") or tensors.get("A")
-    b_shape = tensors.get("b") or tensors.get("B")
-    c_shape = tensors.get("c") or tensors.get("C")
-    if a_shape is None or b_shape is None or c_shape is None:
-        raise ValueError("A/B/C tensor annotations are required")
+    a_shape, b_shape, c_shape = _infer_gemm_tensor_roles(tensors)
 
     bm, bn = _infer_output_tile(fragment_shapes, shared_shapes)
     bk = _infer_k_tile(shared_shapes, pipeline)
@@ -86,6 +82,38 @@ class _PipelineSpec:
     num_stages: int
 
 
+def _infer_gemm_tensor_roles(tensors: dict[str, _TensorSpec]) -> tuple[_TensorSpec, _TensorSpec, _TensorSpec]:
+    named_roles = (
+        tensors.get("a") or tensors.get("A"),
+        tensors.get("b") or tensors.get("B"),
+        tensors.get("c") or tensors.get("C"),
+    )
+    if all(role is not None for role in named_roles):
+        return named_roles  # type: ignore[return-value]
+
+    candidates: list[tuple[_TensorSpec, _TensorSpec, _TensorSpec]] = []
+    tensor_specs = list(tensors.values())
+    for a_candidate in tensor_specs:
+        m, k = a_candidate.shape
+        for b_candidate in tensor_specs:
+            if b_candidate is a_candidate:
+                continue
+            if b_candidate.shape[0] != k:
+                continue
+            n = b_candidate.shape[1]
+            for c_candidate in tensor_specs:
+                if c_candidate is a_candidate or c_candidate is b_candidate:
+                    continue
+                if c_candidate.shape == (m, n):
+                    candidates.append((a_candidate, b_candidate, c_candidate))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise ValueError("Unable to infer unique A/B/C tensor roles from GEMM tensor shapes")
+    raise ValueError("A/B/C tensor annotations are required or must form A(M,K), B(K,N), C(M,N)")
+
+
 def _select_tilelang_function(functions: list[ast.FunctionDef | ast.AsyncFunctionDef]) -> ast.FunctionDef | ast.AsyncFunctionDef:
     prim_funcs = [func for func in functions if any(_is_t_attr_call(decorator, "prim_func") for decorator in func.decorator_list)]
     if prim_funcs:
@@ -113,25 +141,52 @@ def _get_source_or_script(func: Any) -> str:
     raise ValueError("Unable to inspect TileLang function source")
 
 
-def _collect_int_symbols(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, int]:
-    symbols: dict[str, int] = {}
-    positional_args = func.args.args
-    defaults = func.args.defaults
-    default_offset = len(positional_args) - len(defaults)
-    for index, default in enumerate(defaults):
-        arg_name = positional_args[default_offset + index].arg
-        if isinstance(default, ast.Constant) and isinstance(default.value, int):
-            symbols[arg_name] = default.value
+StaticSymbol = int | str | tuple[int, int]
 
+
+def _collect_static_symbols(tree: ast.Module, func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, StaticSymbol]:
+    symbols: dict[str, StaticSymbol] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _collect_default_symbols(node, symbols)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            value = _eval_static_symbol(node.value, symbols)
+            if value is not None:
+                symbols[node.targets[0].id] = value
+    _collect_default_symbols(func, symbols)
     for node in ast.walk(func):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            value = _eval_int(node.value, symbols)
+            value = _eval_static_symbol(node.value, symbols)
             if value is not None:
                 symbols[node.targets[0].id] = value
     return symbols
 
 
-def _collect_tensors(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[str, int]) -> dict[str, _TensorSpec]:
+def _collect_default_symbols(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    symbols: dict[str, StaticSymbol],
+) -> None:
+    positional_args = func.args.args
+    defaults = func.args.defaults
+    default_offset = len(positional_args) - len(defaults)
+    for index, default in enumerate(defaults):
+        arg_name = positional_args[default_offset + index].arg
+        value = _eval_static_symbol(default, symbols)
+        if value is not None:
+            symbols[arg_name] = value
+
+
+def _eval_static_symbol(node: ast.AST, symbols: dict[str, StaticSymbol]) -> StaticSymbol | None:
+    int_value = _eval_int(node, symbols)
+    if int_value is not None:
+        return int_value
+    dtype = _eval_dtype(node, symbols)
+    if dtype is not None:
+        return dtype
+    return _eval_shape2(node, symbols)
+
+
+def _collect_tensors(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[str, StaticSymbol]) -> dict[str, _TensorSpec]:
     tensors: dict[str, _TensorSpec] = {}
     for arg in func.args.args:
         if arg.annotation is None:
@@ -142,7 +197,7 @@ def _collect_tensors(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict
     return tensors
 
 
-def _collect_match_buffers(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[str, int]) -> dict[str, _TensorSpec]:
+def _collect_match_buffers(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[str, StaticSymbol]) -> dict[str, _TensorSpec]:
     tensors: dict[str, _TensorSpec] = {}
     for node in ast.walk(func):
         if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
@@ -151,26 +206,26 @@ def _collect_match_buffers(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols
         if not isinstance(value, ast.Call) or not _is_t_attr(value.func, "match_buffer") or len(value.args) < 2:
             continue
         shape = _eval_shape2(value.args[1], symbols)
-        dtype = _eval_match_buffer_dtype(value)
+        dtype = _eval_match_buffer_dtype(value, symbols)
         if shape is not None and dtype is not None:
             tensors[node.targets[0].id] = _TensorSpec(shape=shape, dtype=dtype)
     return tensors
 
 
-def _eval_match_buffer_dtype(node: ast.Call) -> str:
+def _eval_match_buffer_dtype(node: ast.Call, symbols: dict[str, StaticSymbol]) -> str:
     if len(node.args) >= 3:
-        dtype = _eval_dtype(node.args[2])
+        dtype = _eval_dtype(node.args[2], symbols)
         if dtype is not None:
             return dtype
     for keyword in node.keywords:
         if keyword.arg == "dtype":
-            dtype = _eval_dtype(keyword.value)
+            dtype = _eval_dtype(keyword.value, symbols)
             if dtype is not None:
                 return dtype
     return "float32"
 
 
-def _parse_tensor_annotation(annotation: ast.AST, symbols: dict[str, int]) -> _TensorSpec | None:
+def _parse_tensor_annotation(annotation: ast.AST, symbols: dict[str, StaticSymbol]) -> _TensorSpec | None:
     if not isinstance(annotation, ast.Call):
         return None
     if not _is_t_attr(annotation.func, "Tensor"):
@@ -179,13 +234,15 @@ def _parse_tensor_annotation(annotation: ast.AST, symbols: dict[str, int]) -> _T
         return None
 
     shape = _eval_shape2(annotation.args[0], symbols)
-    dtype = _eval_dtype(annotation.args[1])
+    dtype = _eval_dtype(annotation.args[1], symbols)
+    if shape is None and _looks_like_shape2(annotation.args[0]):
+        raise ValueError("unsupported dynamic shape: tensor shapes must be static integer pairs")
     if shape is None or dtype is None:
         return None
     return _TensorSpec(shape=shape, dtype=dtype)
 
 
-def _collect_alloc_shapes(func: ast.FunctionDef | ast.AsyncFunctionDef, op_name: str, symbols: dict[str, int]) -> list[tuple[int, int]]:
+def _collect_alloc_shapes(func: ast.FunctionDef | ast.AsyncFunctionDef, op_name: str, symbols: dict[str, StaticSymbol]) -> list[tuple[int, int]]:
     shapes: list[tuple[int, int]] = []
     for node in ast.walk(func):
         if not isinstance(node, ast.Call) or not _is_t_attr(node.func, op_name) or not node.args:
@@ -199,7 +256,7 @@ def _collect_alloc_shapes(func: ast.FunctionDef | ast.AsyncFunctionDef, op_name:
 def _collect_scoped_alloc_buffers(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     scope_prefix: str,
-    symbols: dict[str, int],
+    symbols: dict[str, StaticSymbol],
 ) -> list[tuple[int, int]]:
     shapes: list[tuple[int, int]] = []
     for node in ast.walk(func):
@@ -208,7 +265,7 @@ def _collect_scoped_alloc_buffers(
         scope = None
         for keyword in node.keywords:
             if keyword.arg == "scope":
-                scope = _eval_dtype(keyword.value)
+                scope = _eval_dtype(keyword.value, symbols)
         if scope is None or not scope.startswith(scope_prefix):
             continue
         shape = _eval_shape2(node.args[0], symbols)
@@ -217,7 +274,7 @@ def _collect_scoped_alloc_buffers(
     return shapes
 
 
-def _find_pipeline(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[str, int]) -> _PipelineSpec:
+def _find_pipeline(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[str, StaticSymbol]) -> _PipelineSpec:
     for node in ast.walk(func):
         if not isinstance(node, ast.Call) or not _is_t_attr(node.func, "Pipelined"):
             continue
@@ -227,7 +284,7 @@ def _find_pipeline(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[s
             if keyword.arg == "num_stages":
                 num_stages = _eval_int(keyword.value, symbols) or 0
         if count is None or count <= 0:
-            raise ValueError("T.Pipelined count must be a positive static integer")
+            raise ValueError("unsupported dynamic shape: T.Pipelined count must be a positive static integer")
         if num_stages not in (1, 2):
             raise ValueError("num_stages must be 1 or 2 for the first CIM extractor MVP")
         return _PipelineSpec(count=count, num_stages=num_stages)
@@ -244,7 +301,7 @@ def _find_pipeline(func: ast.FunctionDef | ast.AsyncFunctionDef, symbols: dict[s
     raise ValueError("T.Pipelined loop was not found")
 
 
-def _eval_num_stages_annotation(node: ast.Call, symbols: dict[str, int]) -> int | None:
+def _eval_num_stages_annotation(node: ast.Call, symbols: dict[str, StaticSymbol]) -> int | None:
     for keyword in node.keywords:
         if keyword.arg != "annotations" or not isinstance(keyword.value, ast.Dict):
             continue
@@ -277,7 +334,10 @@ def _infer_k_tile(shared_shapes: list[tuple[int, int]], pipeline: _PipelineSpec)
     raise ValueError("Unable to infer BK from T.alloc_shared")
 
 
-def _eval_shape2(node: ast.AST, symbols: dict[str, int]) -> tuple[int, int] | None:
+def _eval_shape2(node: ast.AST, symbols: dict[str, StaticSymbol]) -> tuple[int, int] | None:
+    if isinstance(node, ast.Name):
+        value = symbols.get(node.id)
+        return value if isinstance(value, tuple) else None
     if isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 2:
         first = _eval_int(node.elts[0], symbols)
         second = _eval_int(node.elts[1], symbols)
@@ -286,21 +346,28 @@ def _eval_shape2(node: ast.AST, symbols: dict[str, int]) -> tuple[int, int] | No
     return None
 
 
-def _eval_dtype(node: ast.AST) -> str | None:
+def _looks_like_shape2(node: ast.AST) -> bool:
+    return isinstance(node, (ast.Tuple, ast.List)) and len(node.elts) == 2
+
+
+def _eval_dtype(node: ast.AST, symbols: dict[str, StaticSymbol] | None = None) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.Name):
+        if symbols is not None and isinstance(symbols.get(node.id), str):
+            return symbols[node.id]  # type: ignore[return-value]
         return node.id
     if isinstance(node, ast.Attribute):
         return node.attr
     return None
 
 
-def _eval_int(node: ast.AST, symbols: dict[str, int]) -> int | None:
+def _eval_int(node: ast.AST, symbols: dict[str, StaticSymbol]) -> int | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
         return node.value
     if isinstance(node, ast.Name):
-        return symbols.get(node.id)
+        value = symbols.get(node.id)
+        return value if isinstance(value, int) else None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         value = _eval_int(node.operand, symbols)
         return -value if value is not None else None

@@ -27,6 +27,7 @@
 - `scripts/`：初始化、同步和验证的辅助脚本。
 - `tilelang_cim/`：CIM-TileIR 编译器侧原型包。
 - `examples/gemm_ir.py`：生成静态 GEMM 的 `CIM-TileIR JSON` 示例。
+- `examples/make_tilelang_gemm_source.py`：按命令行参数生成静态 TileLang GEMM 源码，作为 TileLang 前端输入。
 - `examples/extract_tilelang_gemm.py`：从窄模板 TileLang GEMM 源码提取 `CIM-TileIR JSON` 的示例。
 - `examples/export_golem_sst.py`：从 `CIM-TileIR JSON` 或 TileLang 源码导出 Golem SST env/contract artifacts。
 - `examples/plan_golem_events.py`：从 `CIM-TileIR JSON` 生成 Golem task mapping/debug plan。
@@ -101,11 +102,26 @@ bash examples/run_tilelang_golem_e2e.sh \
 
 默认是 dry-run：它会生成 `CIM-TileIR JSON`、`golem_sst.env`、contracts、Golem mapping/debug plan，并运行 artifact validator、mapping consistency checker 和硬件 wrapper dry-run。默认 `run_root` 位于 `/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_<timestamp>`。
 
+如果不想手写或修改 TileLang fixture，可以直接让 E2E 脚本按参数生成 TileLang 源码：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --generate-tilelang-source \
+  --m 1024 --n 1024 --k 128 \
+  --bm 64 --bn 64 --bk 64 \
+  --dtype float32 \
+  --num-stages 2
+```
+
+生成的源码会写到 `$RUN_ROOT/generated_tilelang_gemm.py`，后续仍然严格走 `TileLang source -> CIM-TileIR -> Golem SST exporter`，不会把命令行参数直接写成 `GOLEM_*`。默认参数与当前已跑通的 smoke 规格一致：`M=1024, N=1024, K=128, BM=64, BN=64, BK=64, dtype=float32, num_stages=2, threads=128`。
+
 确认当前 shell 已具备硬件脚本所需环境后，显式加 `--execute` 才运行真实 SST：
 
 ```bash
 bash examples/run_tilelang_golem_e2e.sh \
-  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --generate-tilelang-source \
+  --m 1024 --n 1024 --k 128 \
+  --bm 64 --bn 64 --bk 64 \
   --execute
 ```
 

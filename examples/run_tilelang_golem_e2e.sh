@@ -12,9 +12,19 @@ RUN_ROOT="$DEFAULT_RUN_ROOT_BASE/tilelang_golem_e2e_$TIMESTAMP"
 HARDWARE_TESTS_DIR="$DEFAULT_HARDWARE_TESTS_DIR"
 EXECUTE=0
 USE_USER_SHELL_ENV=0
+GENERATE_TILELANG_SOURCE=0
 LOG_NAME="tilelang_golem_smoke.log"
 MESH_W=4
 MESH_H=5
+GEMM_M=1024
+GEMM_N=1024
+GEMM_K=128
+GEMM_BM=64
+GEMM_BN=64
+GEMM_BK=64
+GEMM_DTYPE="float32"
+GEMM_NUM_STAGES=2
+GEMM_THREADS=128
 PYTHON_BIN="${PYTHON:-python3}"
 
 show_help() {
@@ -25,6 +35,18 @@ Usage:
 Options:
   --tilelang-source FILE   TileLang Python source file.
                             Default: $DEFAULT_TILELANG_SOURCE
+  --generate-tilelang-source
+                           Generate TileLang GEMM source under run root instead
+                           of reading --tilelang-source.
+  --m N                    Generated GEMM M. Default: $GEMM_M
+  --n N                    Generated GEMM N. Default: $GEMM_N
+  --k N                    Generated GEMM K. Default: $GEMM_K
+  --bm N                   Generated tile BM. Default: $GEMM_BM
+  --bn N                   Generated tile BN. Default: $GEMM_BN
+  --bk N                   Generated tile BK. Default: $GEMM_BK
+  --dtype DTYPE            Generated tensor dtype. Default: $GEMM_DTYPE
+  --num-stages N           Generated T.Pipelined num_stages. Default: $GEMM_NUM_STAGES
+  --threads N              Generated T.Kernel threads. Default: $GEMM_THREADS
   --run-root DIR           Per-run output directory.
                             Default: $DEFAULT_RUN_ROOT_BASE/tilelang_golem_e2e_<timestamp>
   --hardware-tests-dir DIR Directory containing run_noc_dma_pipeline.sh.
@@ -48,6 +70,26 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--tilelang-source)
 			TILELANG_SOURCE="$2"; shift 2 ;;
+		--generate-tilelang-source)
+			GENERATE_TILELANG_SOURCE=1; shift ;;
+		--m)
+			GEMM_M="$2"; shift 2 ;;
+		--n)
+			GEMM_N="$2"; shift 2 ;;
+		--k)
+			GEMM_K="$2"; shift 2 ;;
+		--bm)
+			GEMM_BM="$2"; shift 2 ;;
+		--bn)
+			GEMM_BN="$2"; shift 2 ;;
+		--bk)
+			GEMM_BK="$2"; shift 2 ;;
+		--dtype)
+			GEMM_DTYPE="$2"; shift 2 ;;
+		--num-stages)
+			GEMM_NUM_STAGES="$2"; shift 2 ;;
+		--threads)
+			GEMM_THREADS="$2"; shift 2 ;;
 		--run-root)
 			RUN_ROOT="$2"; shift 2 ;;
 		--hardware-tests-dir)
@@ -71,11 +113,6 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [[ ! -f "$TILELANG_SOURCE" ]]; then
-	echo "[ERROR] Missing TileLang source: $TILELANG_SOURCE" >&2
-	exit 1
-fi
-
 mkdir -p "$RUN_ROOT"
 RUN_ROOT="$(cd "$RUN_ROOT" && pwd)"
 ARTIFACT_ROOT="$RUN_ROOT/golem_codegen_artifacts"
@@ -84,6 +121,27 @@ EVENT_PLAN="$RUN_ROOT/gemm.golem_event_plan.json"
 VALIDATION_REPORT="$RUN_ROOT/golem_artifact_validation.json"
 MAPPING_REPORT="$RUN_ROOT/golem_mapping_consistency.json"
 SINGLE_RUN_REPORT="$RUN_ROOT/golem_single_run_report.json"
+
+if [[ "$GENERATE_TILELANG_SOURCE" -eq 1 ]]; then
+	TILELANG_SOURCE="$RUN_ROOT/generated_tilelang_gemm.py"
+	echo "[0/6] Generating TileLang GEMM source..."
+	"$PYTHON_BIN" "$REPO_ROOT/examples/make_tilelang_gemm_source.py" \
+		--m "$GEMM_M" \
+		--n "$GEMM_N" \
+		--k "$GEMM_K" \
+		--bm "$GEMM_BM" \
+		--bn "$GEMM_BN" \
+		--bk "$GEMM_BK" \
+		--dtype "$GEMM_DTYPE" \
+		--num-stages "$GEMM_NUM_STAGES" \
+		--threads "$GEMM_THREADS" \
+		--output "$TILELANG_SOURCE"
+fi
+
+if [[ ! -f "$TILELANG_SOURCE" ]]; then
+	echo "[ERROR] Missing TileLang source: $TILELANG_SOURCE" >&2
+	exit 1
+fi
 
 echo "[1/6] Extracting TileLang source to CIM-TileIR..."
 "$PYTHON_BIN" "$REPO_ROOT/examples/extract_tilelang_gemm.py" \

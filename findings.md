@@ -41,6 +41,8 @@
 - `Golem-aware event plan` 的核心不是 toy mesh 映射，而是复用硬件 `pipeline_config.h` / `gen_hbm_init.py` 公式：macro-task diagonal banding、worker slot/core、group、data node、A/B packed-once base、C output slot 和 reuse offset。
 - 2026-06-17 用户确认删除无关内容：toy architecture、abstract event planner、toy event plan schema、toy 示例和相关测试从当前代码路径移除。
 - `golem_event_plan` 保留为 Golem task mapping/debug/calibration 辅助产物，不作为 SST 必需输入。
+- 2026-06-18 用户确认真实 TileOPs 复杂模式和 Markdown/HTML 报告暂时不用做，当前改为补齐参数化 TileLang GEMM 源码生成入口。
+- 参数化入口仍必须遵守边界：命令行参数先生成 TileLang 源码，源码再被 extractor 转成 `CIM-TileIR`，最后由 Golem exporter 生成 `GOLEM_*` env 和 contracts。
 
 ## 技术决策
 
@@ -67,6 +69,7 @@
 | Golem-aware plan 不输出 cycle estimate | 当前阶段先对齐硬件映射语义，cycle/stats 校准进入下一阶段 |
 | 删除 toy architecture 与 abstract event planner | 真实 Golem SST 已经接入，toy 路径不再是有效产品路径 |
 | 保留 Golem-aware plan 作为 debug artifact | 它能解释 macro-task、worker core、data node、buffer slot 和 reuse offset，利于后续对齐 SST stats |
+| 参数化实验入口先生成 TileLang 源码而不是直接生成 env | 保持 `TileLang -> CIM-TileIR -> Golem exporter` 的前后端解耦边界 |
 
 ## 遇到的问题
 
@@ -79,10 +82,10 @@
 
 - CIM-TileIR extractor 先做 out-of-tree 包，还是直接注册为 TileLang pass。
 - CIM 内部 target 标记采用 `c -keys=cim`、`c -keys=sst` 还是复用 `noc` key。
-- TileOPs-like smoke path 应优先覆盖普通 GEMM 还是 grouped GEMM。
+- 真实 TileOPs 复杂模式何时恢复推进，以及优先覆盖普通 GEMM 还是 grouped GEMM。
 - exporter 核心 API 必须以 `CIM-TileIR dict` 为输入；CLI 是否首版同时支持 TileLang 源码和 `CIM-TileIR JSON` 仍待确认。
 - Golem 后端约束首版参数来自 CLI 默认值、配置 JSON，还是读取硬件侧 env。
-- 完整 SST smoke 是否能在小规模 GEMM 上稳定通过 `Simulation is complete` 和 `VERIFY-C = PASS`，当前作为后续可选后验验证。
+- 不同参数化 GEMM 规模是否都能在真实 SST 上稳定通过 `Simulation is complete` 和 `VERIFY-C = PASS`。
 - `golem_event_plan` 是否应改名为 Golem mapping report，避免被误认为执行必需输入。
 
 ## 资源

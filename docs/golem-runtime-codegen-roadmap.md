@@ -610,6 +610,54 @@ bash examples/run_tilelang_golem_e2e.sh \
 
 `--execute` 成功后，脚本会自动选择 artifact root 下最新 stats run 和最新 SST log，输出 `golem_single_run_report.json`。该入口仍遵守前后端边界：TileLang 只负责被解析到 `CIM-TileIR`，Golem SST backend exporter 才负责填充 `GOLEM_*` 和 contracts。
 
+## 已完成：参数化 TileLang GEMM 源码入口
+
+为了避免每次实验都手写或修改 TileLang fixture，新增源码生成器：
+
+```bash
+python examples/make_tilelang_gemm_source.py \
+  --m 1024 --n 1024 --k 128 \
+  --bm 64 --bn 64 --bk 64 \
+  --dtype float32 \
+  --num-stages 2 \
+  --threads 128 \
+  --output /data4/jjgong/tmp/codegen_sstnoc/generated_tilelang_gemm.py
+```
+
+默认参数与当前已通过真实 SST 的 smoke 规格一致：
+
+```text
+M=1024, N=1024, K=128
+BM=64, BN=64, BK=64
+dtype=float32
+num_stages=2
+threads=128
+```
+
+更推荐通过一键 E2E 入口直接生成并执行后续流程：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --generate-tilelang-source \
+  --m 1024 --n 1024 --k 128 \
+  --bm 64 --bn 64 --bk 64 \
+  --dtype float32 \
+  --num-stages 2
+```
+
+`--generate-tilelang-source` 会把源码写入 `$RUN_ROOT/generated_tilelang_gemm.py`。后续流程仍然是：
+
+```text
+generated TileLang source
+  -> extract_tilelang_gemm.py
+  -> CIM-TileIR JSON
+  -> export_golem_sst.py
+  -> Golem SST artifacts
+  -> validators / mapping checker / smoke wrapper
+```
+
+这一步的意义是补齐“前端语言参数化输入”的最小实验入口，而不是把参数直接写入 Golem env。`GOLEM_*` 仍只由 Golem SST backend exporter 生成。
+
 真实执行成功记录：
 
 ```text
@@ -641,5 +689,6 @@ report.status=ok
 7. 已完成：codegen-driven hardware integration smoke。
 8. 已完成首版：single-run SST stats report。
 9. 已完成首版：TileLang 到 Golem SST 一键端到端入口。
-10. 当前执行：extractor 泛化与 TileOPs-like 扩展。
-11. 长期目标：runtime ABI / ELF 闭环。
+10. 已完成：参数化 TileLang GEMM 源码生成与 E2E 参数入口。
+11. 当前暂缓：真实 TileOPs 复杂模式、Markdown/HTML 报告和 sweep。
+12. 长期目标：runtime ABI / ELF 闭环。

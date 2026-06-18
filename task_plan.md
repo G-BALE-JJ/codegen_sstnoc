@@ -129,15 +129,19 @@
 - [x] extractor 支持 `T.match_buffer` 缺省 dtype 时按 `float32` 解析，兼容 TileLang `PrimFunc.script()` 输出
 - [x] 使用真实 SST 完成 `TileLang -> CIM-TileIR -> Golem SST -> VERIFY-C -> stats -> report` E2E run
 - [x] 记录成功 run：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443`
-- [ ] 减少 extractor 对 A/B/C 参数命名的依赖
-- [ ] 增加更多 dtype、默认 pipeline stages、不同变量命名的 fixture
+- [x] 减少 extractor 对 A/B/C 参数命名的依赖：支持从 `A(M,K), B(K,N), C(M,N)` shape 关系推断角色
+- [x] 增加更多 dtype、默认 pipeline stages、不同变量命名的 fixture 覆盖
+- [x] 对动态 shape 输出明确 unsupported reason
 - [ ] 改进缺失 shared buffer、fragment buffer、`T.gemm`、静态 shape 的错误信息
-- [ ] 保持对动态 shape、转置 GEMM、复杂 fusion 的明确拒绝
-- [ ] 新增 TileOPs-like GEMM fixture
-- [ ] 验证 extractor 对简化 TileOPs GEMM 形态的支持边界
-- [ ] 对真实 TileOPs 复杂模式输出明确 unsupported reason
+- [ ] 保持对转置 GEMM、复杂 fusion 的明确拒绝
+- [x] 新增 TileOPs-like GEMM fixture
+- [x] 验证 extractor 对简化 TileOPs GEMM 形态的支持边界：普通非转置 GEMM 可提取并导出 Golem artifacts
+- [x] 新增 `examples/make_tilelang_gemm_source.py`，支持从 CLI 参数生成静态 TileLang GEMM 源码
+- [x] `examples/run_tilelang_golem_e2e.sh` 支持 `--generate-tilelang-source`、`--m/--n/--k`、`--bm/--bn/--bk`、`--dtype`、`--num-stages`、`--threads`
+- [x] 生成源码默认落在 `$RUN_ROOT/generated_tilelang_gemm.py`，再进入 `TileLang source -> CIM-TileIR -> Golem SST exporter`
+- [ ] 对真实 TileOPs 复杂模式输出明确 unsupported reason（当前暂缓，不作为近期必要步骤）
 - [ ] 不修改 `/data4/jjgong/TileOPs`
-- **状态：**E2E smoke 完成，extractor 泛化继续
+- **状态：**E2E smoke 与参数化 TileLang GEMM 入口完成，真实 TileOPs 复杂模式暂缓
 
 ### 阶段 11：runtime ABI 与 ELF 长期闭环
 - [ ] 定义 runtime ABI，例如 `tl_core_id`、`tl_dma_load`、`tl_dma_store`、`tl_cim_gemm`
@@ -149,7 +153,7 @@
 ## 关键问题
 
 1. TileLang extractor 下一步应继续 out-of-tree AST MVP，还是开始接入 TileLang pass pipeline？
-2. TileOPs-like smoke path 应优先覆盖普通 GEMM 还是 grouped GEMM？
+2. 真实 TileOPs 复杂模式何时恢复推进，以及优先覆盖普通 GEMM 还是 grouped GEMM？
 3. exporter 首版 CLI 是否同时支持 TileLang 源码和 `CIM-TileIR JSON`，还是先只支持 JSON？
 4. `BM/BK` 整数倍 micro-tiling 尚未在硬件侧完成时，codegen 是否应严格拒绝非硬件 tile shape？
 5. 后续是否需要新增显式 `--contract-dir` / `--env-file` 参数，还是继续通过 `source golem_sst.env` 和 `GOLEM_ARTIFACT_ROOT` 注入？
@@ -192,6 +196,12 @@ python examples/gemm_ir.py --output /data4/jjgong/tmp/codegen_sstnoc/gemm.cimtil
 #   --artifact-root /data4/jjgong/tmp/codegen_sstnoc/golem_codegen_artifacts
 # bash examples/run_tilelang_golem_e2e.sh \
 #   --tilelang-source tests/fixtures/tilelang_gemm_fixture.py
+# bash examples/run_tilelang_golem_e2e.sh \
+#   --generate-tilelang-source \
+#   --m 1024 --n 1024 --k 128 \
+#   --bm 64 --bn 64 --bk 64 \
+#   --dtype float32 \
+#   --num-stages 2
 # bash examples/run_golem_sst_smoke.sh \
 #   --artifact-root /data4/jjgong/tmp/codegen_sstnoc/golem_codegen_artifacts \
 #   -- \

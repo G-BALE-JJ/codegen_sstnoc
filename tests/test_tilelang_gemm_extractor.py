@@ -1,7 +1,9 @@
 import pytest
 
+from tests.fixtures.tileops_like_gemm_fixture import TILEOPS_LIKE_GEMM_SOURCE
 from tests.fixtures.tilelang_gemm_fixture import tilelang_gemm_fixture
-from tilelang_cim import extract_gemm_ir_from_source, extract_gemm_ir_from_tilelang
+from tilelang_cim import extract_gemm_ir_from_source, extract_gemm_ir_from_tilelang, validate_cim_tile_ir
+from tilelang_cim.golem_exporter import export_golem_sst_artifacts
 
 
 TILELANG_GEMM_SOURCE = """
@@ -45,6 +47,41 @@ def test_extract_gemm_ir_from_tilelang_source():
     assert ir["program"][1]["pipeline_stages"] == 2
 
 
+def test_extract_gemm_ir_does_not_depend_on_abc_argument_names():
+    ir = extract_gemm_ir_from_source(
+        """
+import tilelang.language as T
+
+@T.prim_func
+def gemm(
+    lhs: T.Tensor((256, 64), "int8"),
+    rhs: T.Tensor((64, 128), "int8"),
+    out: T.Tensor((256, 128), "int32"),
+) -> None:
+    with T.Kernel(T.ceildiv(128, 64), T.ceildiv(256, 64), threads=128) as (bx, by):
+        lhs_shared = T.alloc_shared((64, 32), "int8")
+        rhs_shared = T.alloc_shared((32, 64), "int8")
+        out_local = T.alloc_fragment((64, 64), "int32")
+
+        T.clear(out_local)
+
+        for ko in T.Pipelined(T.ceildiv(64, 32), num_stages=2):
+            T.copy(lhs[by * 64, ko * 32], lhs_shared)
+            T.copy(rhs[ko * 32, bx * 64], rhs_shared)
+            T.gemm(lhs_shared, rhs_shared, out_local)
+
+        T.copy(out_local, out[by * 64, bx * 64])
+"""
+    )
+
+    assert ir["tensors"]["A"]["shape"] == [256, 64]
+    assert ir["tensors"]["B"]["shape"] == [64, 128]
+    assert ir["tensors"]["C"]["shape"] == [256, 128]
+    assert ir["tensors"]["A"]["dtype"] == "int8"
+    assert ir["tensors"]["B"]["dtype"] == "int8"
+    assert ir["tensors"]["C"]["dtype"] == "int32"
+
+
 def test_extract_gemm_ir_from_python_function_source():
     ir = extract_gemm_ir_from_tilelang(tilelang_gemm_fixture(), mesh_w=4, mesh_h=2)
 
@@ -53,6 +90,24 @@ def test_extract_gemm_ir_from_python_function_source():
     assert ir["tensors"]["A"]["shape"] == [1024, 128]
     assert ir["tensors"]["B"]["shape"] == [128, 1024]
     assert ir["tensors"]["C"]["shape"] == [1024, 1024]
+
+
+def test_extract_tileops_like_gemm_fixture_exports_golem_artifacts(tmp_path):
+    ir = extract_gemm_ir_from_source(TILEOPS_LIKE_GEMM_SOURCE, mesh_w=4, mesh_h=5)
+
+    assert validate_cim_tile_ir(ir) == []
+    assert ir["tile"] == {"BM": 64, "BN": 64, "BK": 64}
+    assert ir["tensors"]["A"]["shape"] == [1024, 128]
+    assert ir["tensors"]["B"]["shape"] == [128, 1024]
+    assert ir["tensors"]["C"]["shape"] == [1024, 1024]
+    assert ir["tensors"]["A"]["dtype"] == "float32"
+    assert ir["program"][1]["pipeline_stages"] == 2
+
+    paths = export_golem_sst_artifacts(ir, tmp_path)
+
+    assert paths["env"].exists()
+    assert paths["resolved_contract"].exists()
+    assert paths["env_mapping"].exists()
 
 
 def test_extract_gemm_ir_from_match_buffer_without_dtype_defaults_to_float32():
@@ -75,6 +130,64 @@ def gemm(a_handle: T.handle, b_handle: T.handle, c_handle: T.handle):
 
     assert ir["tensors"]["A"]["shape"] == [1024, 128]
     assert ir["tensors"]["A"]["dtype"] == "float32"
+
+
+def test_extract_gemm_ir_defaults_pipeline_stages_to_one():
+    ir = extract_gemm_ir_from_source(
+        """
+import tilelang.language as T
+
+@T.prim_func
+def gemm(
+    lhs: T.Tensor((128, 64), "float32"),
+    rhs: T.Tensor((64, 128), "float32"),
+    out: T.Tensor((128, 128), "float32"),
+) -> None:
+    with T.Kernel(T.ceildiv(128, 64), T.ceildiv(128, 64), threads=128) as (bx, by):
+        lhs_shared = T.alloc_shared((64, 64), "float32")
+        rhs_shared = T.alloc_shared((64, 64), "float32")
+        out_local = T.alloc_fragment((64, 64), "float32")
+
+        T.clear(out_local)
+
+        for ko in T.Pipelined(T.ceildiv(64, 64)):
+            T.copy(lhs[by * 64, ko * 64], lhs_shared)
+            T.copy(rhs[ko * 64, bx * 64], rhs_shared)
+            T.gemm(lhs_shared, rhs_shared, out_local)
+
+        T.copy(out_local, out[by * 64, bx * 64])
+"""
+    )
+
+    assert ir["program"][1]["pipeline_stages"] == 1
+    assert ir["tensors"]["A"]["dtype"] == "float32"
+    assert ir["tensors"]["B"]["dtype"] == "float32"
+    assert ir["tensors"]["C"]["dtype"] == "float32"
+
+
+def test_extract_gemm_ir_rejects_dynamic_tensor_shapes_with_clear_error():
+    with pytest.raises(ValueError, match="unsupported dynamic shape"):
+        extract_gemm_ir_from_source(
+            """
+import tilelang.language as T
+
+@T.prim_func
+def gemm(
+    lhs: T.Tensor((M, K), "float32"),
+    rhs: T.Tensor((K, N), "float32"),
+    out: T.Tensor((M, N), "float32"),
+) -> None:
+    with T.Kernel(T.ceildiv(N, 64), T.ceildiv(M, 64), threads=128) as (bx, by):
+        lhs_shared = T.alloc_shared((64, 64), "float32")
+        rhs_shared = T.alloc_shared((64, 64), "float32")
+        out_local = T.alloc_fragment((64, 64), "float32")
+
+        T.clear(out_local)
+
+        for ko in T.Pipelined(T.ceildiv(K, 64)):
+            T.gemm(lhs_shared, rhs_shared, out_local)
+"""
+        )
 
 
 def test_extract_gemm_ir_rejects_missing_tilelang_gemm():
