@@ -12,10 +12,10 @@
 ## 当前范围
 
 - 当前分支以 RISC-V CIM 2D-mesh 的 `CIM-TileIR` 技术路线为主线。
-- 近期目标是完成 `All frontends -> CIM-TileIR -> Golem SST env/contract` 的后端导出闭环。
-- 当前已经支持静态 GEMM 的 `CIM-TileIR JSON` 构造、窄模板 TileLang GEMM 提取，以及 `CIM-TileIR -> Golem SST env/contract` 导出。
+- 近期主线是完成并打磨 `All frontends -> CIM-TileIR -> Golem SST env/contract -> SST smoke/report` 的端到端闭环。
+- 当前已经支持静态 GEMM 的 `CIM-TileIR JSON` 构造、窄模板 TileLang GEMM 提取、`CIM-TileIR -> Golem SST env/contract` 导出、真实 SST smoke 和 single-run stats report。
 - toy `CIMArchitectureSpec`、`serial_formula_v0` 和 abstract event planner 已从当前主线移除；真实硬件对接以本地 `RISC-V-CIM-Manycore-SST` 的 Golem runtime contract 为准。
-- 当前不承诺 OS loader、runtime ABI 或 RISC-V ELF 工具链闭环；首版硬件对接以生成 `golem_sst.env`、`matmul_op_desc_resolved.json`、`matmul_env_mapping_v1.json` 并驱动既有 `run_noc_dma_pipeline.sh` smoke path 为目标。
+- 当前不承诺 OS loader、runtime ABI 或 RISC-V ELF 工具链闭环；首版硬件对接已经以 `golem_sst.env`、`matmul_op_desc_resolved.json`、`matmul_env_mapping_v1.json` 驱动既有 `run_noc_dma_pipeline.sh` smoke path 跑通。
 - SST C codegen 方案保留为历史背景和长期旁支，不再作为当前分支的近期主线。
 
 ## 目录说明
@@ -214,7 +214,7 @@ python scripts/check_golem_mapping_consistency.py \
 
 该检查不运行 SST，会确认 resolved contract 中的 M/N/K/block shape 与 event plan 的 tile counts、task count、worker/data node 范围、A/B/C base address 和事件地址引用一致。
 
-当前硬件默认脚本已经可以运行后，下一阶段需要执行 codegen-driven hardware integration smoke，证明 codegen artifacts 可以真实驱动 SST：
+如需单独复现 codegen-driven hardware integration smoke，可直接用当前 artifacts 驱动真实 SST：
 
 ```bash
 bash examples/run_golem_sst_smoke.sh \
@@ -235,13 +235,13 @@ bash examples/run_golem_sst_smoke.sh \
   --log codegen_smoke.log
 ```
 
-验收标准：
+已完成验收标准：
 
 - 硬件 log 中出现 `Simulation is complete`。
 - `VERIFY_C=1` 后处理通过。当前 `[VERIFY-C] PASS` 输出到终端 stdout，不写入 SST log；若 verify 失败，硬件脚本会中止。
 - 本次 run 生成 `execution_summary.csv`、`dma_summary.csv`、`noc_summary.csv`、`memory_summary.csv`。
 
-通过该 smoke 后，生成 single-run SST stats report：
+当前成功 smoke 已生成 single-run SST stats report；如需复现，可运行：
 
 ```bash
 RUN_ROOT=/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346

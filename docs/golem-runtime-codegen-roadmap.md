@@ -61,20 +61,24 @@ CIM-TileIR 表达的参数能不能填进当前 Golem SST 后端？
 
 ## 当前阶段结论
 
-硬件默认 `run_noc_dma_pipeline.sh` 已经可以运行后，当前项目不应继续停留在 dry-run 或离线检查阶段。下一步是执行并记录一次 codegen-driven hardware integration smoke：
+当前项目已经完成从静态/TileLang 前端到真实 Golem SST smoke 的首版闭环。已经验证的路径是：
 
 ```text
-CIM-TileIR JSON
+TileLang source / generated TileLang source / CIM-TileIR JSON
+  -> CIM-TileIR
   -> Golem SST exporter artifacts
   -> artifact validator
   -> Golem mapping consistency checker
-  -> examples/run_golem_sst_smoke.sh --execute
+  -> examples/run_golem_sst_smoke.sh --execute 或 examples/run_tilelang_golem_e2e.sh --execute
   -> 真实 RISC-V-CIM-Manycore-SST run_noc_dma_pipeline.sh
+  -> VERIFY-C
+  -> stats CSV
+  -> golem_single_run_report.json
 ```
 
-该阶段要证明的是：不是硬件默认配置能跑，而是 `codegen_sstnoc` 生成的 `golem_sst.env` 和 contracts 能真实驱动 SST pipeline，并得到 `Simulation is complete`、`VERIFY-C = PASS` 和 stats CSV。
+已经证明的内容是：不是只有硬件默认配置能跑，`codegen_sstnoc` 生成的 `golem_sst.env` 和 contracts 也能真实驱动 SST pipeline，并得到 `Simulation is complete`、`VERIFY-C = PASS`、stats CSV 和 single-run JSON report。
 
-当前明确不做 sweep、自动调参、多 run 聚合或预测模型。single-run SST stats report 放在 codegen-driven hardware integration smoke 通过之后。
+当前阶段是阶段 10 收尾：打磨 TileLang E2E 入口和 extractor 支持边界。当前明确不做 sweep、自动调参、多 run 聚合或预测模型；runtime ABI / ELF 闭环仍是长期阶段 11。
 
 ## 临时目录约定
 
@@ -465,16 +469,16 @@ python scripts/check_golem_mapping_consistency.py \
 - worker core、worker slot、data node、macro task id 是否在合法范围。
 - A/B/C base address 是否存在，事件地址引用是否与 task base address 一致。
 
-## 当前阶段：codegen-driven hardware integration smoke
+## 已完成：codegen-driven hardware integration smoke
 
-硬件默认 `run_noc_dma_pipeline.sh` 可以运行后，下一步必须证明 codegen 生成的 artifacts 也能驱动真实 SST pipeline，而不是只验证硬件默认配置。
+硬件默认 `run_noc_dma_pipeline.sh` 可以运行后，已经完成一次 codegen artifacts 驱动真实 SST pipeline 的 smoke。该阶段验证的不是硬件默认配置，而是 `CIM-TileIR -> Golem SST exporter` 生成的 env/contract artifacts 能真实接入硬件加载环境。
 
-推荐手动验收流程：
+复现流程：
 
 ```bash
 python examples/gemm_ir.py \
   --output /data4/jjgong/tmp/codegen_sstnoc/gemm.golem.cimtile.json \
-  --m 1024 --n 1024 --k 1024 \
+  --m 1024 --n 1024 --k 128 \
   --bm 64 --bn 64 --bk 64 \
   --mesh-w 4 --mesh-h 5 \
   --pipeline-stages 1 \
@@ -505,7 +509,7 @@ bash examples/run_golem_sst_smoke.sh \
   --log codegen_smoke.log
 ```
 
-验收标准：
+已完成验收标准：
 
 - `Simulation is complete`
 - `VERIFY-C = PASS`
@@ -517,15 +521,13 @@ bash examples/run_golem_sst_smoke.sh \
 
 该阶段不放入 pytest，因为完整 SST run 时间长且依赖硬件环境。
 
-完成该阶段后，需要把以下信息记录到 `progress.md`：
+成功记录已经写入 `progress.md`：
 
-- `CIM-TileIR JSON` 路径。
-- `artifact-root` 路径。
-- artifact validation report 路径和 `ok` 状态。
-- mapping consistency report 路径和 `ok` 状态。
-- 硬件 log 路径。
-- stats-dir 路径。
-- `Simulation is complete` / `VERIFY-C = PASS` 的验证结果。
+- run root：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346`
+- 硬件 log：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/logs/full_smoke_execute_terminal_run_20260617_174010_1201356.log`
+- stats-dir：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/stats/overlap0/run_20260617_174010_1201356`
+- `Simulation is complete, simulated time: 234.589 us`
+- `VERIFY-C` 后处理通过；`[VERIFY-C] PASS` 输出在终端 stdout，不写入 SST log。
 
 ## 已完成首版：single-run SST stats report
 

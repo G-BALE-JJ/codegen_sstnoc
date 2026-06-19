@@ -16,16 +16,18 @@ TileLang 是第一个前端，Golem SST 是第一个真实硬件后端。toy arc
 
 ## 1. 当前定位
 
-当前项目仍处于编译器侧原型阶段，目标不是模拟抽象 CIM mesh，也不是生成 RISC-V ELF，而是验证以下链路是否能闭合：
+当前项目仍处于编译器侧原型阶段，目标不是模拟抽象 CIM mesh，也不是生成 RISC-V ELF，而是验证并打磨以下链路：
 
 ```text
-TileLang GEMM / static GEMM params
+TileLang GEMM / generated TileLang GEMM / static GEMM params
     ↓
 CIM-TileIR JSON
     ↓
 Golem backend legality checks
     ↓
 Golem SST env/contract artifacts
+    ↓
+真实 Golem SST smoke / stats / single-run report
 ```
 
 `CIM-TileIR` 是前端语言与硬件后端之间的唯一接口契约。前端不直接生成 `GOLEM_*` 环境变量；Golem 后端也不直接依赖 TileLang 语法。
@@ -99,7 +101,7 @@ Golem SST env/contract artifacts
 
 ### 2.4 硬件侧 env/contract 解耦审计
 
-当前阶段不要求直接运行完整 SST。已新增静态审计脚本确认硬件仓库是否具备外部 artifacts 注入入口：
+早期阶段曾先通过静态审计确认硬件仓库是否具备外部 artifacts 注入入口：
 
 - `GOLEM_ARTIFACT_ROOT`
 - `GOLEM_MATMUL_*`
@@ -116,6 +118,8 @@ Golem SST env/contract artifacts
 
 - `scripts/check_golem_hardware_contracts.py`
 - `tests/test_check_golem_hardware_contracts.py`
+
+后续阶段已经完成真实 codegen-driven SST smoke，因此该审计现在是低成本回归检查，不再代表当前最高验收层级。
 
 ### 2.5 Golem task mapping/debug plan
 
@@ -139,6 +143,31 @@ Golem SST env/contract artifacts
 - `tests/test_plan_golem_events_example.py`
 
 该 plan 用于解释、调试和后续 stats 校准；当前不输出 cycle estimate。
+
+### 2.6 真实 SST smoke、E2E 与 single-run report
+
+已完成真实 codegen-driven hardware integration smoke：
+
+- `CIM-TileIR JSON -> Golem SST artifacts -> validators -> mapping checker -> run_golem_sst_smoke.sh --execute`
+- 成功 run root：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346`
+- 硬件 log：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/logs/full_smoke_execute_terminal_run_20260617_174010_1201356.log`
+- stats-dir：`/data4/jjgong/tmp/codegen_sstnoc/full_smoke_20260617_173346/golem_codegen_artifacts/stats/overlap0/run_20260617_174010_1201356`
+- 关键结果：`Simulation is complete, simulated time: 234.589 us`
+
+已完成 TileLang 到 Golem SST 一键 E2E：
+
+- `TileLang source -> CIM-TileIR -> Golem SST artifacts -> validators -> mapping checker -> real SST execution -> VERIFY-C -> stats -> report`
+- 成功 run root：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443`
+- report：`/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_20260617_193443/golem_single_run_report.json`
+- 关键结果：`[VERIFY-C] PASS dtype=fp32 sampled=1024 mismatches=0`
+
+已完成 single-run stats report MVP：
+
+- `scripts/build_golem_single_run_report.py`
+- `tests/test_build_golem_single_run_report.py`
+- 输出 `mode=golem_single_run_stats_report`
+- 输出 `model.status=not_calibrated`
+- 只解释单次真实 SST 运行，不做 sweep、多 run 聚合、自动调参或预测模型。
 
 ## 3. 已移除内容
 
@@ -223,26 +252,26 @@ bash scripts/check_docs.sh
 
 当前原型不能回答以下问题：
 
-- 完整 SST 运行后的真实性能周期是多少。
-- NoC 是否拥塞。
-- WCP strict-order consumption 具体造成多少 queue wait。
+- 多参数 sweep 后的性能趋势是什么。
+- 未校准预测模型能否可靠预测新 shape 的周期。
+- NoC 拥塞、memory queue 和 WCP strict-order consumption 在不同参数下的系统性规律是什么。
 - runtime ABI / RISC-V ELF 如何生成并加载。
 - TileOPs 复杂 grouped GEMM 是否可直接提取。
 - 非硬件 tile shape 如何通过 micro-tiling 落到 Golem runtime。
 
-这些问题应在 Golem exporter 稳定后，通过 stats-based calibration、TileOPs-like smoke path 和长期 runtime ABI/ELF 阶段继续推进。
+当前 single-run report 已能解释一次真实运行的观测指标和派生指标，但不能外推为预测模型或参数优化结论。这些问题应通过后续多 run 数据、TileOPs 复杂模式支持和长期 runtime ABI/ELF 阶段继续推进。
 
-## 6. 下一阶段建议
+## 6. 当前收尾建议
 
-下一阶段不再恢复 toy architecture 或 abstract event planner。建议优先做：
+下一阶段不再恢复 toy architecture 或 abstract event planner。当前阶段 10 的短期收尾建议优先做：
 
 ```text
-Golem stats calibration report
+TileLang extractor error UX and unsupported-mode boundaries
 ```
 
 最小目标：
 
-- 读取 `execution_summary.csv`、`dma_summary.csv`、`noc_summary.csv`、`memory_summary.csv`。
-- 允许 stats 文件缺失时输出结构化 warning，而不是直接失败。
-- 将 `golem_event_plan` 的 mapping 信息与 SST 观测结果放到同一份 report。
-- 首版 report 的模型状态可以是 `not_calibrated`，先建立稳定输入/输出格式。
+- 改进缺失 shared buffer、fragment buffer、`T.gemm`、静态 shape 时的错误信息。
+- 对转置 GEMM、复杂 fusion、grouped GEMM 继续给出明确 unsupported reason。
+- 保持真实 `TileOPs` 仓库只读；复杂 TileOPs 模式暂缓，不作为近期必要步骤。
+- 保持 single-run report 的定位：当前是性能报告 MVP，不引入 sweep、预测模型或多 run 聚合。

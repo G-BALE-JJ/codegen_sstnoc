@@ -1232,3 +1232,31 @@ TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_
 ```bash
 TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_make_tilelang_gemm_source.py -q
 ```
+
+### 文档整理：同步阶段 8-10 完成状态
+- **状态：**完成
+- 背景：
+  - 新会话恢复时发现 `task_plan.md` 顶部仍写“阶段 8：codegen-driven hardware integration smoke”。
+  - `docs/golem-runtime-codegen-roadmap.md` 和 `docs/cim-tileir-prototype-summary.md` 部分段落仍以“下一步执行 smoke / stats report”为当前口吻。
+  - 实际进度已经完成阶段 8 codegen-driven smoke、阶段 9 single-run report 和阶段 10 TileLang E2E/参数化源码入口。
+- 已执行的修改：
+  - 更新 `task_plan.md` 当前阶段为阶段 10 收尾，明确短期剩余工作是 extractor 错误信息和 unsupported-mode 边界。
+  - 将阶段 5 中的 SST 后验验证标记为已在后续真实 smoke 中完成。
+  - 更新 `README.md` 当前范围，明确真实 SST smoke 和 single-run stats report 已跑通。
+  - 更新 `docs/golem-runtime-codegen-roadmap.md`，把 codegen-driven smoke 改为已完成，并补充成功 run root、log 和 stats-dir。
+  - 更新 `docs/cim-tileir-prototype-summary.md`，补充真实 SST smoke、TileLang E2E 和 single-run report MVP，调整当前不具备能力和短期收尾建议。
+- 仍保持的边界：
+  - 不修改代码。
+  - 不修改 `/data4/jjgong/TileOPs`。
+  - 不恢复 toy architecture 或 abstract event planner。
+  - 不把 Markdown/HTML 报告、sweep 或预测模型重新设为近期必要步骤。
+- 已执行验证：
+
+```bash
+bash scripts/check_docs.sh
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests -q
+```
+
+- 验证结果：
+  - `bash scripts/check_docs.sh`：基础文档检查通过。
+  - `pytest tests -q`：`50 passed in 12.37s`。

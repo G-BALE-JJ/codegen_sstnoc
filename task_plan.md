@@ -8,7 +8,7 @@
 
 ## 当前阶段
 
-阶段 8：codegen-driven hardware integration smoke
+阶段 10：TileLang 到 Golem SST E2E 与 extractor 扩展收尾。当前已完成真实 TileLang -> `CIM-TileIR` -> Golem SST -> stats -> report 端到端 smoke，以及参数化 TileLang GEMM 源码生成入口；短期剩余工作是补齐 extractor 错误信息和继续保持复杂模式的明确拒绝。阶段 11 runtime ABI / ELF 闭环仍是长期目标。
 
 ## 临时目录约定
 
@@ -64,8 +64,8 @@
 - [x] 新增 `scripts/check_golem_hardware_contracts.py`
 - [x] 静态审计硬件侧 `GOLEM_ARTIFACT_ROOT`、`GOLEM_MATMUL_*`、contract JSON、HBM generator、runtime env reader 和 compile-time fallback macros
 - [x] 确认当前阶段不要求直接运行 `run_noc_dma_pipeline.sh --execute`
-- [ ] 可选后验验证：硬件侧 `Simulation is complete`
-- [ ] 可选后验验证：硬件侧 `VERIFY-C = PASS`
+- [x] 后续阶段已完成真实 codegen-driven smoke：硬件侧 `Simulation is complete`
+- [x] 后续阶段已完成真实 codegen-driven smoke：`VERIFY-C = PASS`
 - **状态：**完成
 
 ### 阶段 6：Golem task mapping/debug plan
@@ -167,13 +167,13 @@
 | SST C codegen 降为历史背景/长期旁支 | 当前用户明确要求以 CIM-TileIR 技术路线为准 |
 | 当前不修改 `TileOPs` | TileOPs 先作为上层用例来源，避免把问题面扩大 |
 | 所有前端必须先落到 `CIM-TileIR` | `CIM-TileIR` 是唯一前后端接口，避免 TileLang 与 Golem SST 直接耦合 |
-| 下一阶段优先做 `CIM-TileIR-to-Golem SST backend exporter` | 用户最终产物是从统一 IR 填充 SST env/script，而不是先做硬件建模 |
+| 优先做 `CIM-TileIR-to-Golem SST backend exporter` | 用户最终产物是从统一 IR 填充 SST env/script，而不是先做硬件建模 |
 | Golem path 先生成 env/contract，不直接生成 RoCC 指令 | 硬件 runtime 已有 header-only API/WCP descriptor，先对齐可消费接口风险更低 |
 | 非硬件 tile shape 首版严格拒绝 | 硬件总结显示 micro-tiling 尚未完成，不能让 codegen 生成 runtime 不能正确执行的任务 |
 | Architecture spec 降级为后端约束校验 | 当前主线是前端参数到 SST 脚本填充，硬件参数只需服务 exporter 的合法性检查 |
 | SST smoke wrapper 默认 dry-run | 避免误触发长时间 SST 仿真，完整运行必须显式传 `--execute` |
 | exporter env 必须写入 Golem 阵列配置 | 确保硬件脚本不会回落到默认 array size，与 exporter 约束保持一致 |
-| 当前阶段不要求直接跑完整 SST | 用户要求改为检查硬件内容是否已经解耦出来，完整运行作为后续可选后验验证 |
+| 阶段 5 曾不要求直接跑完整 SST | 当时用户要求改为检查硬件内容是否已经解耦出来；后续阶段 8/10 已完成真实 SST smoke 与 TileLang E2E |
 | 删除 toy architecture 与 abstract event planner | 本地已接入真实 Golem SST 架构，继续维护 toy 路径会制造两套架构真相 |
 | 保留 Golem task mapping/debug plan | 它对齐真实 Golem runtime 映射，可用于解释、调试和后续 stats 校准 |
 | 当前不做 sweep | 当前优先证明 codegen artifacts 能驱动单次真实 SST，并建立 single-run stats report；多 run 参数扫描会提前放大运行成本和维护复杂度 |
