@@ -139,6 +139,9 @@
 - [x] 新增 `examples/make_tilelang_gemm_source.py`，支持从 CLI 参数生成静态 TileLang GEMM 源码
 - [x] `examples/run_tilelang_golem_e2e.sh` 支持 `--generate-tilelang-source`、`--m/--n/--k`、`--bm/--bn/--bk`、`--dtype`、`--num-stages`、`--threads`
 - [x] 生成源码默认落在 `$RUN_ROOT/generated_tilelang_gemm.py`，再进入 `TileLang source -> CIM-TileIR -> Golem SST exporter`
+- [x] 新建分支 `feat/tir-extractor-path-b` 探索路径 B：直接从 TileLang 生成的 TIR `PrimFunc` 抽取 `CIM-TileIR`
+- [x] 新增 `extract_gemm_ir_from_tir` MVP，直接读取 TIR `buffer_map`、`alloc_buffers`、`For.annotations` 和 `tl.tileop.gemm` call 参数，不依赖 `PrimFunc.script()` 文本
+- [x] `extract_gemm_ir_from_tilelang` 对 TIR-like 输入优先走 TIR visitor，源码/script 解析作为 fallback
 - [ ] 对真实 TileOPs 复杂模式输出明确 unsupported reason（当前暂缓，不作为近期必要步骤）
 - [ ] 不修改 `/data4/jjgong/TileOPs`
 - **状态：**E2E smoke 与参数化 TileLang GEMM 入口完成，真实 TileOPs 复杂模式暂缓

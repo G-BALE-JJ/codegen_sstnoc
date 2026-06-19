@@ -1260,3 +1260,42 @@ TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests -q
 - 验证结果：
   - `bash scripts/check_docs.sh`：基础文档检查通过。
   - `pytest tests -q`：`50 passed in 12.37s`。
+
+### 分支：路径 B TIR extractor MVP
+- **状态：**实现中，MVP 已通过目标测试
+- 分支：
+  - `feat/tir-extractor-path-b`
+- 背景：
+  - 用户希望探索不从 TileLang 前端源码入手，而是从 TileLang 降级/解析后的 TIR 入手，以复用 TileLang lowering。
+  - 分析后确认最佳切点不是完整 `LowerTileOp` 之后的低层 TIR，而是 TileLang 生成的 `PrimFunc` / pre-`LowerTileOp` TIR：此时仍保留 `tl.tileop.gemm` 高层语义。
+- 已执行的修改：
+  - 新增 `extract_gemm_ir_from_tir(func_or_mod, mesh_w, mesh_h)`。
+  - TIR extractor 直接读取：
+    - `PrimFunc.buffer_map` 中的 A/B/C shape 和 dtype。
+    - `Block.alloc_buffers` 中的 shared / local.fragment buffer。
+    - `For.annotations["num_stages"]` 中的 pipeline stages。
+    - `tl.tileop.gemm` call 参数中的 BM/BN/BK 和 transpose flags。
+  - `extract_gemm_ir_from_tilelang` 对 TIR-like 输入优先走 TIR visitor；源码/script 解析继续作为 fallback。
+  - 导出 `extract_gemm_ir_from_tir` 到 `tilelang_cim.__all__`。
+  - 新增测试：
+    - `test_extract_gemm_ir_from_tir_prim_func_without_script_text`
+    - `test_extract_tilelang_prefers_tir_visitor_when_script_is_unavailable`
+- TDD 记录：
+  - 初始运行目标测试失败，错误为 `ImportError: cannot import name 'extract_gemm_ir_from_tir'`。
+  - 实现 TIR extractor 和导出后，目标测试通过。
+- 已执行验证：
+
+```bash
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py::test_extract_gemm_ir_from_tir_prim_func_without_script_text -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py::test_extract_tilelang_prefers_tir_visitor_when_script_is_unavailable -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py -q
+```
+
+- 验证结果：
+  - TIR PrimFunc 目标测试：`1 passed`
+  - script 不可用时优先 TIR visitor：`1 passed`
+  - extractor 测试组：`10 passed`
+- 当前边界：
+  - MVP 只支持单个静态 GEMM `PrimFunc`。
+  - 仍明确拒绝 transpose GEMM。
+  - 尚未把 TileLang pipeline 截断到 `LowerTileOp` 前作为正式 API；当前先消费原始 TileLang frontend 产生的 `PrimFunc`。

@@ -89,7 +89,7 @@ python examples/extract_tilelang_gemm.py \
   --mesh-w 8 --mesh-h 8
 ```
 
-当前 extractor 是第一版 MVP，只支持标准静态 GEMM 模板。它可以识别源码里的 `T.Tensor`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined`、`T.gemm`，也可以从 TileLang `PrimFunc.script()` 的 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 形态中提取同类信息；暂不支持任意动态 shape、复杂 fusion、转置 GEMM、复杂调度或完整 TileLang pass pipeline。
+当前 extractor 是第一版 MVP，只支持标准静态 GEMM 模板。它可以识别源码里的 `T.Tensor`、`T.alloc_shared`、`T.alloc_fragment`、`T.Pipelined`、`T.gemm`，也可以从 TileLang 生成的 TIR `PrimFunc` 直接读取 `buffer_map`、`alloc_buffers`、`For.annotations` 和 `tl.tileop.gemm` call 参数；当输入只能提供 `PrimFunc.script()` 文本时，仍保留 `T.match_buffer`、`T.alloc_buffer`、`T.serial`、`T.gemm` 的 script fallback。暂不支持任意动态 shape、复杂 fusion、转置 GEMM、复杂调度或完整 TileLang pass pipeline。
 
 当前 CIM 原型阶段的完整整理见 `docs/cim-tileir-prototype-summary.md`。Golem SST 硬件对齐后的下一步路线见 `docs/golem-runtime-codegen-roadmap.md`。新路线的重点是所有前端先落到 `CIM-TileIR`，再由 Golem SST backend exporter 生成 runtime contract：`golem_sst.env`、resolved matmul contract、env mapping 和 SST smoke 验证。Golem 硬件参数首版作为 backend exporter 的约束校验，不作为第一阶段主产物。
 

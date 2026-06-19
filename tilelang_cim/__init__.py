@@ -1,6 +1,6 @@
 from .builder import build_gemm_ir
 from .checker import validate_cim_tile_ir
-from .extractor import extract_gemm_ir_from_source, extract_gemm_ir_from_tilelang
+from .extractor import extract_gemm_ir_from_source, extract_gemm_ir_from_tilelang, extract_gemm_ir_from_tir
 from .golem_constraints import GolemBackendConfig, validate_cim_tile_ir_for_golem
 from .golem_event_planner import build_golem_event_plan
 from .golem_exporter import build_golem_matmul_op_desc, export_golem_sst_artifacts
@@ -11,6 +11,7 @@ __all__ = [
     "build_golem_event_plan",
     "extract_gemm_ir_from_source",
     "extract_gemm_ir_from_tilelang",
+    "extract_gemm_ir_from_tir",
     "export_golem_sst_artifacts",
     "GolemBackendConfig",
     "to_json_text",

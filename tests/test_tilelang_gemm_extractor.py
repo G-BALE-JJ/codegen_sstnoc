@@ -2,7 +2,12 @@ import pytest
 
 from tests.fixtures.tileops_like_gemm_fixture import TILEOPS_LIKE_GEMM_SOURCE
 from tests.fixtures.tilelang_gemm_fixture import tilelang_gemm_fixture
-from tilelang_cim import extract_gemm_ir_from_source, extract_gemm_ir_from_tilelang, validate_cim_tile_ir
+from tilelang_cim import (
+    extract_gemm_ir_from_source,
+    extract_gemm_ir_from_tilelang,
+    extract_gemm_ir_from_tir,
+    validate_cim_tile_ir,
+)
 from tilelang_cim.golem_exporter import export_golem_sst_artifacts
 
 
@@ -89,6 +94,38 @@ def test_extract_gemm_ir_from_python_function_source():
     assert ir["program"][1]["count"] == 2
     assert ir["tensors"]["A"]["shape"] == [1024, 128]
     assert ir["tensors"]["B"]["shape"] == [128, 1024]
+    assert ir["tensors"]["C"]["shape"] == [1024, 1024]
+
+
+def test_extract_gemm_ir_from_tir_prim_func_without_script_text():
+    prim_func = tilelang_gemm_fixture()
+
+    ir = extract_gemm_ir_from_tir(prim_func, mesh_w=4, mesh_h=2)
+
+    assert ir["mesh"] == {"w": 4, "h": 2}
+    assert ir["tile"] == {"BM": 64, "BN": 64, "BK": 64}
+    assert ir["program"][1]["count"] == 2
+    assert ir["program"][1]["pipeline_stages"] == 2
+    assert ir["tensors"]["A"]["shape"] == [1024, 128]
+    assert ir["tensors"]["B"]["shape"] == [128, 1024]
+    assert ir["tensors"]["C"]["shape"] == [1024, 1024]
+    assert ir["tensors"]["A"]["dtype"] == "float32"
+    assert validate_cim_tile_ir(ir) == []
+
+
+def test_extract_tilelang_prefers_tir_visitor_when_script_is_unavailable():
+    class PrimFuncWithoutScriptText:
+        def __init__(self, prim_func):
+            self.body = prim_func.body
+            self.buffer_map = prim_func.buffer_map
+
+        def script(self):
+            raise AssertionError("script() should not be used for TIR-like inputs")
+
+    ir = extract_gemm_ir_from_tilelang(PrimFuncWithoutScriptText(tilelang_gemm_fixture()), mesh_w=4, mesh_h=2)
+
+    assert ir["tile"] == {"BM": 64, "BN": 64, "BK": 64}
+    assert ir["program"][1]["pipeline_stages"] == 2
     assert ir["tensors"]["C"]["shape"] == [1024, 1024]
 
 

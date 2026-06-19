@@ -17,8 +17,65 @@ def extract_gemm_ir_from_tilelang(
     mesh_h: int = 8,
 ) -> dict[str, Any]:
     """Extract MVP GEMM CIM-TileIR from a TileLang function's Python source."""
+    if _looks_like_tir_prim_func(func):
+        return extract_gemm_ir_from_tir(func, mesh_w=mesh_w, mesh_h=mesh_h)
     source = _get_source_or_script(func)
     return extract_gemm_ir_from_source(source, mesh_w=mesh_w, mesh_h=mesh_h)
+
+
+def extract_gemm_ir_from_tir(
+    func_or_mod: Any,
+    *,
+    mesh_w: int = 8,
+    mesh_h: int = 8,
+) -> dict[str, Any]:
+    """Extract MVP GEMM CIM-TileIR directly from TileLang-generated TIR."""
+    funcs = _iter_tir_prim_funcs(func_or_mod)
+    if not funcs:
+        raise ValueError("No TIR PrimFunc was found")
+    if len(funcs) > 1:
+        raise ValueError("Expected one TIR PrimFunc for GEMM extraction")
+
+    func = funcs[0]
+    tensors = _collect_tir_buffer_tensors(func)
+    a_shape, b_shape, c_shape = _infer_gemm_tensor_roles(tensors)
+    alloc_buffers = _collect_tir_alloc_buffers(func)
+    gemm_call = _find_tir_gemm_call(func)
+    pipeline = _find_tir_pipeline(func)
+
+    bm = _int_imm(gemm_call.args[5], "T.gemm M tile")
+    bn = _int_imm(gemm_call.args[6], "T.gemm N tile")
+    bk = _int_imm(gemm_call.args[7], "T.gemm K tile")
+    transpose_a = bool(_int_imm(gemm_call.args[3], "T.gemm transpose_A"))
+    transpose_b = bool(_int_imm(gemm_call.args[4], "T.gemm transpose_B"))
+    if transpose_a or transpose_b:
+        raise ValueError("transpose GEMM is not supported by the first TIR extractor MVP")
+
+    _require_tir_buffer_scope(alloc_buffers, "shared", "shared buffer")
+    _require_tir_buffer_scope(alloc_buffers, "local.fragment", "fragment buffer")
+
+    ir = build_gemm_ir(
+        m=a_shape.shape[0],
+        n=b_shape.shape[1],
+        k=a_shape.shape[1],
+        bm=bm,
+        bn=bn,
+        bk=bk,
+        mesh_w=mesh_w,
+        mesh_h=mesh_h,
+        pipeline_stages=pipeline.num_stages,
+        a_dtype=a_shape.dtype,
+        b_dtype=b_shape.dtype,
+        c_dtype=c_shape.dtype,
+    )
+    errors = validate_cim_tile_ir(ir)
+    if errors:
+        raise ValueError("Extracted invalid CIM-TileIR:\n" + "\n".join(f"- {error}" for error in errors))
+    return ir
+
+
+def _looks_like_tir_prim_func(value: Any) -> bool:
+    return hasattr(value, "body") and hasattr(value, "buffer_map")
 
 
 def extract_gemm_ir_from_source(
@@ -80,6 +137,130 @@ class _TensorSpec:
 class _PipelineSpec:
     count: int
     num_stages: int
+
+
+def _iter_tir_prim_funcs(func_or_mod: Any) -> list[Any]:
+    if _looks_like_tir_prim_func(func_or_mod):
+        return [func_or_mod]
+    functions = getattr(func_or_mod, "functions", None)
+    if functions is None:
+        return []
+    return [func for func in functions.values() if _looks_like_tir_prim_func(func)]
+
+
+def _collect_tir_buffer_tensors(func: Any) -> dict[str, _TensorSpec]:
+    tensors: dict[str, _TensorSpec] = {}
+    for _, buffer in getattr(func, "buffer_map", {}).items():
+        shape = _shape_from_tir_buffer(buffer)
+        dtype = str(getattr(buffer, "dtype"))
+        name = str(getattr(buffer, "name", getattr(buffer, "name_hint", "")))
+        if shape is not None and name:
+            tensors[name] = _TensorSpec(shape=shape, dtype=dtype)
+    return tensors
+
+
+def _shape_from_tir_buffer(buffer: Any) -> tuple[int, int] | None:
+    shape = getattr(buffer, "shape", None)
+    if shape is None or len(shape) != 2:
+        return None
+    first = _maybe_int_imm(shape[0])
+    second = _maybe_int_imm(shape[1])
+    if first is None or second is None:
+        raise ValueError("unsupported dynamic shape: TIR buffer shapes must be static integer pairs")
+    return first, second
+
+
+def _collect_tir_alloc_buffers(func: Any) -> list[Any]:
+    alloc_buffers: list[Any] = []
+
+    def visit(node: Any) -> None:
+        for buffer in getattr(node, "alloc_buffers", []):
+            alloc_buffers.append(buffer)
+
+    _post_order_visit(func.body, visit)
+    return alloc_buffers
+
+
+def _find_tir_gemm_call(func: Any) -> Any:
+    gemm_calls: list[Any] = []
+
+    def visit(node: Any) -> None:
+        op = getattr(node, "op", None)
+        if op is not None and str(op) == "Op(tl.tileop.gemm)":
+            gemm_calls.append(node)
+
+    _post_order_visit(func.body, visit)
+    if not gemm_calls:
+        raise ValueError("T.gemm call was not found")
+    if len(gemm_calls) > 1:
+        raise ValueError("Expected one T.gemm call for the first TIR extractor MVP")
+    return gemm_calls[0]
+
+
+def _find_tir_pipeline(func: Any) -> _PipelineSpec:
+    loops: list[_PipelineSpec] = []
+
+    def visit(node: Any) -> None:
+        if not hasattr(node, "extent") or not hasattr(node, "annotations"):
+            return
+        count = _maybe_int_imm(node.extent)
+        if count is None or count <= 0:
+            return
+        num_stages = 1
+        annotations = getattr(node, "annotations", {})
+        if "num_stages" in annotations:
+            value = _maybe_int_imm(annotations["num_stages"])
+            if value is not None:
+                num_stages = value
+        loops.append(_PipelineSpec(count=count, num_stages=num_stages))
+
+    _post_order_visit(func.body, visit)
+    if not loops:
+        raise ValueError("TIR serial pipeline loop was not found")
+    if loops[0].num_stages not in (1, 2):
+        raise ValueError("num_stages must be 1 or 2 for the first CIM extractor MVP")
+    return loops[0]
+
+
+def _require_tir_buffer_scope(buffers: list[Any], scope_prefix: str, label: str) -> None:
+    for buffer in buffers:
+        scope = _tir_buffer_scope(buffer)
+        if scope.startswith(scope_prefix):
+            return
+    raise ValueError(f"Unable to infer GEMM tile shape: missing {label}")
+
+
+def _tir_buffer_scope(buffer: Any) -> str:
+    scope = getattr(buffer, "scope", None)
+    if callable(scope):
+        return str(scope())
+    return str(scope or "")
+
+
+def _post_order_visit(body: Any, visitor) -> None:
+    try:
+        from tvm.tir.stmt_functor import post_order_visit
+    except ModuleNotFoundError:
+        import tilelang  # noqa: F401
+        from tvm.tir.stmt_functor import post_order_visit
+
+    post_order_visit(body, visitor)
+
+
+def _int_imm(value: Any, label: str) -> int:
+    result = _maybe_int_imm(value)
+    if result is None:
+        raise ValueError(f"{label} must be a static integer")
+    return result
+
+
+def _maybe_int_imm(value: Any) -> int | None:
+    raw = getattr(value, "value", None)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(value, int):
+        return value
+    return None
 
 
 def _infer_gemm_tensor_roles(tensors: dict[str, _TensorSpec]) -> tuple[_TensorSpec, _TensorSpec, _TensorSpec]:
