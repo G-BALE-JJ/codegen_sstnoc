@@ -186,7 +186,7 @@ def _find_tir_gemm_call(func: Any) -> Any:
 
     def visit(node: Any) -> None:
         op = getattr(node, "op", None)
-        if op is not None and str(op) == "Op(tl.tileop.gemm)":
+        if op is not None and _tir_op_name(op) == "tl.tileop.gemm":
             gemm_calls.append(node)
 
     _post_order_visit(func.body, visit)
@@ -195,6 +195,22 @@ def _find_tir_gemm_call(func: Any) -> Any:
     if len(gemm_calls) > 1:
         raise ValueError("Expected one T.gemm call for the first TIR extractor MVP")
     return gemm_calls[0]
+
+
+def _tir_op_name(op: Any) -> str:
+    name = getattr(op, "name", None)
+    if isinstance(name, str):
+        return name
+    text = str(op)
+    if text.startswith("Op(") and text.endswith(")"):
+        return text[3:-1]
+    marker = 'name="'
+    if marker in text:
+        start = text.index(marker) + len(marker)
+        end = text.find('"', start)
+        if end != -1:
+            return text[start:end]
+    return text
 
 
 def _find_tir_pipeline(func: Any) -> _PipelineSpec:

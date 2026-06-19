@@ -81,6 +81,46 @@ def test_tilelang_golem_e2e_dry_run_generates_checked_artifacts(tmp_path):
     assert not (run_root / "golem_single_run_report.json").exists()
 
 
+def test_tilelang_golem_e2e_tir_frontend_generates_checked_artifacts(tmp_path):
+    run_root = tmp_path / "e2e"
+    hardware_tests_dir, capture_path = _write_fake_pipeline(tmp_path)
+
+    subprocess.run(
+        [
+            "/bin/bash",
+            "examples/run_tilelang_golem_e2e.sh",
+            "--frontend-mode",
+            "tir",
+            "--tilelang-source",
+            "tests/fixtures/tilelang_gemm_fixture.py",
+            "--run-root",
+            str(run_root),
+            "--hardware-tests-dir",
+            str(hardware_tests_dir),
+        ],
+        check=True,
+        env={
+            "CAPTURE_PATH": str(capture_path),
+            "PATH": f"{_write_fake_toolchain(tmp_path)}:/usr/bin:/bin",
+        },
+    )
+
+    artifact_root = run_root / "golem_codegen_artifacts"
+    cim_tileir = json.loads((run_root / "tilelang_gemm.cimtile.json").read_text(encoding="utf-8"))
+    validation = json.loads((run_root / "golem_artifact_validation.json").read_text(encoding="utf-8"))
+    consistency = json.loads((run_root / "golem_mapping_consistency.json").read_text(encoding="utf-8"))
+
+    assert cim_tileir["tensors"]["A"]["shape"] == [1024, 128]
+    assert cim_tileir["tensors"]["B"]["shape"] == [128, 1024]
+    assert cim_tileir["tensors"]["C"]["shape"] == [1024, 1024]
+    assert cim_tileir["tile"] == {"BM": 64, "BN": 64, "BK": 64}
+    assert cim_tileir["program"][1]["pipeline_stages"] == 2
+    assert (artifact_root / "golem_sst.env").exists()
+    assert validation["ok"] is True
+    assert consistency["ok"] is True
+    assert capture_path.read_text(encoding="utf-8").strip().startswith("--dry-run")
+
+
 def test_tilelang_golem_e2e_execute_builds_single_run_report(tmp_path):
     run_root = tmp_path / "e2e"
     hardware_tests_dir, capture_path = _write_fake_pipeline(tmp_path)

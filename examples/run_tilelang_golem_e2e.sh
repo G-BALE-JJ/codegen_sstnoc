@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_TILELANG_SOURCE="$REPO_ROOT/tests/fixtures/tilelang_gemm_fixture.py"
 DEFAULT_RUN_ROOT_BASE="/data4/jjgong/tmp/codegen_sstnoc"
 DEFAULT_HARDWARE_TESTS_DIR="/data4/jjgong/RISC-V-CIM-Manycore-SST/build/sst-elements/src/sst/elements/golem/tests"
+DEFAULT_TILELANG_CACHE_DIR="/data4/jjgong/tmp/tilelang-cache"
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 TILELANG_SOURCE="$DEFAULT_TILELANG_SOURCE"
@@ -13,6 +14,7 @@ HARDWARE_TESTS_DIR="$DEFAULT_HARDWARE_TESTS_DIR"
 EXECUTE=0
 USE_USER_SHELL_ENV=0
 GENERATE_TILELANG_SOURCE=0
+FRONTEND_MODE="source"
 LOG_NAME="tilelang_golem_smoke.log"
 MESH_W=4
 MESH_H=5
@@ -26,6 +28,7 @@ GEMM_DTYPE="float32"
 GEMM_NUM_STAGES=2
 GEMM_THREADS=128
 PYTHON_BIN="${PYTHON:-python3}"
+export TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-$DEFAULT_TILELANG_CACHE_DIR}"
 
 show_help() {
 	cat <<EOF
@@ -38,6 +41,10 @@ Options:
   --generate-tilelang-source
                            Generate TileLang GEMM source under run root instead
                            of reading --tilelang-source.
+  --frontend-mode MODE     Frontend extraction mode: source or tir.
+                            source reads TileLang source text directly.
+                            tir loads a TileLang PrimFunc and extracts from TIR.
+                            Default: $FRONTEND_MODE
   --m N                    Generated GEMM M. Default: $GEMM_M
   --n N                    Generated GEMM N. Default: $GEMM_N
   --k N                    Generated GEMM K. Default: $GEMM_K
@@ -61,7 +68,7 @@ Options:
   -h, --help               Show this help.
 
 Pipeline:
-  TileLang source -> CIM-TileIR -> Golem SST artifacts -> validators
+  TileLang source/TIR -> CIM-TileIR -> Golem SST artifacts -> validators
   -> Golem mapping plan -> run_golem_sst_smoke.sh -> optional single-run report.
 EOF
 }
@@ -72,6 +79,8 @@ while [[ $# -gt 0 ]]; do
 			TILELANG_SOURCE="$2"; shift 2 ;;
 		--generate-tilelang-source)
 			GENERATE_TILELANG_SOURCE=1; shift ;;
+		--frontend-mode)
+			FRONTEND_MODE="$2"; shift 2 ;;
 		--m)
 			GEMM_M="$2"; shift 2 ;;
 		--n)
@@ -113,6 +122,13 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+case "$FRONTEND_MODE" in
+	source|tir) ;;
+	*)
+		echo "[ERROR] --frontend-mode must be source or tir, got: $FRONTEND_MODE" >&2
+		exit 1 ;;
+esac
+
 mkdir -p "$RUN_ROOT"
 RUN_ROOT="$(cd "$RUN_ROOT" && pwd)"
 ARTIFACT_ROOT="$RUN_ROOT/golem_codegen_artifacts"
@@ -143,12 +159,21 @@ if [[ ! -f "$TILELANG_SOURCE" ]]; then
 	exit 1
 fi
 
-echo "[1/6] Extracting TileLang source to CIM-TileIR..."
-"$PYTHON_BIN" "$REPO_ROOT/examples/extract_tilelang_gemm.py" \
-	"$TILELANG_SOURCE" \
-	--output "$CIM_TILEIR" \
-	--mesh-w "$MESH_W" \
-	--mesh-h "$MESH_H"
+if [[ "$FRONTEND_MODE" == "tir" ]]; then
+	echo "[1/6] Extracting TileLang TIR PrimFunc to CIM-TileIR..."
+	"$PYTHON_BIN" "$REPO_ROOT/examples/extract_tilelang_tir_gemm.py" \
+		"$TILELANG_SOURCE" \
+		--output "$CIM_TILEIR" \
+		--mesh-w "$MESH_W" \
+		--mesh-h "$MESH_H"
+else
+	echo "[1/6] Extracting TileLang source to CIM-TileIR..."
+	"$PYTHON_BIN" "$REPO_ROOT/examples/extract_tilelang_gemm.py" \
+		"$TILELANG_SOURCE" \
+		--output "$CIM_TILEIR" \
+		--mesh-w "$MESH_W" \
+		--mesh-h "$MESH_H"
+fi
 
 echo "[2/6] Exporting CIM-TileIR to Golem SST artifacts..."
 "$PYTHON_BIN" "$REPO_ROOT/examples/export_golem_sst.py" \

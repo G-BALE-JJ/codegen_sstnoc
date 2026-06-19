@@ -102,6 +102,16 @@ bash examples/run_tilelang_golem_e2e.sh \
 
 默认是 dry-run：它会生成 `CIM-TileIR JSON`、`golem_sst.env`、contracts、Golem mapping/debug plan，并运行 artifact validator、mapping consistency checker 和硬件 wrapper dry-run。默认 `run_root` 位于 `/data4/jjgong/tmp/codegen_sstnoc/tilelang_golem_e2e_<timestamp>`。
 
+如果要验证 TileLang 先生成 TIR `PrimFunc`、再由 `extract_gemm_ir_from_tir()` 生成 `CIM-TileIR` 的路径 B，可以显式选择 TIR frontend：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --frontend-mode tir \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py
+```
+
+`--frontend-mode source` 是默认旧路径，直接从 TileLang source text 抽取；`--frontend-mode tir` 会加载 TileLang fixture 生成 `PrimFunc`，再通过 TIR visitor 抽取 `CIM-TileIR`。
+
 如果不想手写或修改 TileLang fixture，可以直接让 E2E 脚本按参数生成 TileLang 源码：
 
 ```bash
@@ -129,6 +139,7 @@ bash examples/run_tilelang_golem_e2e.sh \
 
 ```bash
 bash examples/run_tilelang_golem_e2e.sh \
+  --frontend-mode tir \
   --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
   --use-user-shell-env \
   --execute

@@ -1299,3 +1299,115 @@ TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_
   - MVP 只支持单个静态 GEMM `PrimFunc`。
   - 仍明确拒绝 transpose GEMM。
   - 尚未把 TileLang pipeline 截断到 `LowerTileOp` 前作为正式 API；当前先消费原始 TileLang frontend 产生的 `PrimFunc`。
+
+### 路径 B 接入硬件 E2E 脚本
+- **状态：**TIR frontend 已接入 E2E；真实 SST execute 在当前 Codex 环境受 OpenMPI/socket 限制
+- 已执行的修改：
+  - 新增 `examples/extract_tilelang_tir_gemm.py`，从 TileLang source 中加载返回 `PrimFunc` 的 factory，再调用 `extract_gemm_ir_from_tir()` 输出 `CIM-TileIR JSON`。
+  - 扩展 `examples/run_tilelang_golem_e2e.sh`：
+    - 新增 `--frontend-mode source|tir`。
+    - 默认 `source` 保持旧行为。
+    - `tir` 模式执行 `TileLang source -> PrimFunc -> extract_gemm_ir_from_tir -> CIM-TileIR`。
+    - 未设置 `TILELANG_CACHE_DIR` 时默认使用 `/data4/jjgong/tmp/tilelang-cache`，避免 TileLang import 写入只读 `/home/jiajun/.tilelang`。
+  - 新增 fake hardware E2E 测试覆盖 TIR frontend：
+    - `test_tilelang_golem_e2e_tir_frontend_generates_checked_artifacts`
+  - 新增 CLI 测试覆盖 `examples/extract_tilelang_tir_gemm.py`。
+- 已执行验证：
+
+```bash
+python -m pytest tests/test_run_tilelang_golem_e2e.py::test_tilelang_golem_e2e_tir_frontend_generates_checked_artifacts -q
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests/test_tilelang_gemm_extractor.py tests/test_run_tilelang_golem_e2e.py -q
+bash examples/run_tilelang_golem_e2e.sh \
+  --frontend-mode tir \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --run-root /data4/jjgong/tmp/codegen_sstnoc/tir_frontend_dry_run_check \
+  --hardware-tests-dir /data4/jjgong/RISC-V-CIM-Manycore-SST/build/sst-elements/src/sst/elements/golem/tests \
+  --use-user-shell-env
+bash scripts/check_docs.sh
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests -q
+```
+
+- 验证结果：
+  - TIR frontend fake hardware E2E：`1 passed`
+  - extractor + E2E 测试组：`14 passed`
+  - TIR frontend 真实硬件 dry-run：通过，硬件 wrapper 成功消费 TIR 路径生成的 `GOLEM_*` env 和 contracts。
+  - 文档检查：基础文档检查通过。
+  - 完整 pytest：`54 passed in 20.39s`。
+- 真实 execute 尝试：
+
+```bash
+bash examples/run_tilelang_golem_e2e.sh \
+  --frontend-mode tir \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --run-root /data4/jjgong/tmp/codegen_sstnoc/tir_frontend_execute_check \
+  --hardware-tests-dir /data4/jjgong/RISC-V-CIM-Manycore-SST/build/sst-elements/src/sst/elements/golem/tests \
+  --use-user-shell-env \
+  --execute \
+  --log tir_frontend_execute.log
+```
+
+- execute 结果：
+  - TIR frontend extraction 成功。
+  - exporter / artifact validator / mapping checker 成功。
+  - HBM 初始化成功。
+  - RISC-V test binary 编译成功。
+  - SST 启动在当前 Codex 环境失败，失败点为 OpenMPI/socket 初始化：
+
+```text
+opal_ifinit: socket() failed with errno=1
+No network interfaces were found for out-of-band communications.
+MPI_INIT failed
+```
+
+- 结论：
+  - 路径 B 已经接入硬件 E2E 脚本，并通过真实硬件 dry-run 与 execute 前置阶段。
+  - 完整 `Simulation is complete` / `VERIFY-C PASS` 需要在正常终端环境中执行同一条 `--frontend-mode tir --execute` 命令。
+
+### 修复：TIR op name 在 conda Python/TVM FFI 环境中的表示差异
+- **状态：**完成
+- 用户反馈：
+  - 用户在 conda base 终端运行 `--frontend-mode tir --execute` 时，第 1 步失败：
+
+```text
+ValueError: T.gemm call was not found
+```
+
+- 根因：
+  - 初版 `_find_tir_gemm_call()` 使用 `str(op) == "Op(tl.tileop.gemm)"` 判断 TIR call。
+  - 本地 `/usr/bin/python3.10` 测试环境中 `str(op)` 是 `Op(tl.tileop.gemm)`。
+  - 用户终端 conda Python 3.13 / TVM FFI 环境中 `str(op)` 是 `ir.Op(... name="tl.tileop.gemm" ...)`，但 `op.name` 为 `tl.tileop.gemm`。
+  - 因此真实存在的 `tl.tileop.gemm` call 被字符串全等判断漏掉。
+- 修复：
+  - 新增 `_tir_op_name(op)`，优先读取 `op.name`，再兼容旧 `Op(...)` 字符串和 FFI `name="..."` 字符串。
+  - `_find_tir_gemm_call()` 改为判断 `_tir_op_name(op) == "tl.tileop.gemm"`。
+  - 新增 `test_tir_op_name_accepts_tvm_op_string_variants` 覆盖三种 op 表示。
+- 已执行验证：
+
+```bash
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache /data4/jjgong/miniconda3/bin/python \
+  examples/extract_tilelang_tir_gemm.py \
+  tests/fixtures/tilelang_gemm_fixture.py \
+  --output /data4/jjgong/tmp/codegen_sstnoc/tir_frontend_debug.cimtile.json \
+  --mesh-w 4 --mesh-h 5
+
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest \
+  tests/test_tilelang_gemm_extractor.py::test_tir_op_name_accepts_tvm_op_string_variants \
+  tests/test_tilelang_gemm_extractor.py::test_extract_gemm_ir_from_tir_prim_func_without_script_text -q
+
+bash examples/run_tilelang_golem_e2e.sh \
+  --frontend-mode tir \
+  --tilelang-source tests/fixtures/tilelang_gemm_fixture.py \
+  --run-root /data4/jjgong/tmp/codegen_sstnoc/tir_frontend_dry_run_after_op_fix \
+  --hardware-tests-dir /data4/jjgong/RISC-V-CIM-Manycore-SST/build/sst-elements/src/sst/elements/golem/tests \
+  --use-user-shell-env
+
+bash scripts/check_docs.sh
+TILELANG_CACHE_DIR=/data4/jjgong/tmp/tilelang-cache python -m pytest tests -q
+```
+
+- 验证结果：
+  - conda Python 3.13 下 `extract_tilelang_tir_gemm.py` 成功生成 JSON。
+  - 目标测试：`2 passed`。
+  - TIR frontend 真实硬件 dry-run：通过。
+  - 文档检查：基础文档检查通过。
+  - 完整 pytest：`55 passed in 16.98s`。

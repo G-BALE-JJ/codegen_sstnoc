@@ -1,4 +1,6 @@
 import pytest
+import json
+import subprocess
 
 from tests.fixtures.tileops_like_gemm_fixture import TILEOPS_LIKE_GEMM_SOURCE
 from tests.fixtures.tilelang_gemm_fixture import tilelang_gemm_fixture
@@ -8,6 +10,7 @@ from tilelang_cim import (
     extract_gemm_ir_from_tir,
     validate_cim_tile_ir,
 )
+from tilelang_cim.extractor import _tir_op_name
 from tilelang_cim.golem_exporter import export_golem_sst_artifacts
 
 
@@ -111,6 +114,48 @@ def test_extract_gemm_ir_from_tir_prim_func_without_script_text():
     assert ir["tensors"]["C"]["shape"] == [1024, 1024]
     assert ir["tensors"]["A"]["dtype"] == "float32"
     assert validate_cim_tile_ir(ir) == []
+
+
+def test_extract_tilelang_tir_gemm_example_writes_valid_json(tmp_path):
+    output = tmp_path / "tilelang_tir_gemm.cimtile.json"
+
+    subprocess.run(
+        [
+            "python",
+            "examples/extract_tilelang_tir_gemm.py",
+            "tests/fixtures/tilelang_gemm_fixture.py",
+            "--output",
+            str(output),
+            "--mesh-w",
+            "4",
+            "--mesh-h",
+            "5",
+        ],
+        check=True,
+    )
+
+    ir = json.loads(output.read_text(encoding="utf-8"))
+    assert ir["mesh"] == {"w": 4, "h": 5}
+    assert ir["tensors"]["A"]["shape"] == [1024, 128]
+    assert ir["tile"] == {"BM": 64, "BN": 64, "BK": 64}
+    assert validate_cim_tile_ir(ir) == []
+
+
+def test_tir_op_name_accepts_tvm_op_string_variants():
+    class OpWithName:
+        name = "tl.tileop.gemm"
+
+    class LegacyStringOp:
+        def __str__(self):
+            return "Op(tl.tileop.gemm)"
+
+    class FfiStringOp:
+        def __str__(self):
+            return 'ir.Op(span=None, name="tl.tileop.gemm", num_inputs=5)'
+
+    assert _tir_op_name(OpWithName()) == "tl.tileop.gemm"
+    assert _tir_op_name(LegacyStringOp()) == "tl.tileop.gemm"
+    assert _tir_op_name(FfiStringOp()) == "tl.tileop.gemm"
 
 
 def test_extract_tilelang_prefers_tir_visitor_when_script_is_unavailable():
