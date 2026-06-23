@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tilelang_cim import build_gemm_ir, to_json_text, validate_cim_tile_ir
+from tilelang_cim import build_gemm_ir, build_matmul_softmax_graph_ir, build_softmax_ir, to_json_text, validate_cim_tile_ir
 
 
 def test_build_gemm_ir_exports_checked_json():
@@ -107,3 +107,78 @@ def test_checker_rejects_missing_layout_and_invalid_transpose_flags():
 def test_build_gemm_ir_rejects_invalid_pipeline_stage():
     with pytest.raises(ValueError, match="pipeline_stages must be 1 or 2"):
         build_gemm_ir(m=128, n=128, k=128, bm=64, bn=64, bk=32, pipeline_stages=3)
+
+
+def test_build_softmax_ir_exports_checked_json():
+    ir = build_softmax_ir(
+        rows=128,
+        cols=256,
+        dtype="fp32",
+        axis=1,
+        input_name="logits",
+        output_name="prob",
+    )
+
+    assert validate_cim_tile_ir(ir) == []
+
+    payload = json.loads(to_json_text(ir))
+    assert payload["kernel"] == "softmax"
+    assert payload["mode"] == "ir_only"
+    assert payload["target"] == "riscv_cim_mesh"
+    assert payload["tensors"]["logits"] == {
+        "shape": [128, 256],
+        "dtype": "fp32",
+        "layout": "row_major",
+        "addr": "logits_base",
+    }
+    assert payload["tensors"]["prob"] == {
+        "shape": [128, 256],
+        "dtype": "fp32",
+        "layout": "row_major",
+        "addr": "prob_base",
+    }
+    assert payload["attrs"] == {"axis": 1}
+    assert [op["op"] for op in payload["program"]] == [
+        "row_max",
+        "subtract",
+        "exp",
+        "row_sum",
+        "divide",
+        "store",
+    ]
+
+
+def test_checker_rejects_invalid_softmax_axis_and_shape():
+    ir = build_softmax_ir(rows=128, cols=256)
+    ir["attrs"]["axis"] = 0
+    ir["tensors"]["output"]["shape"] = [128, 128]
+
+    errors = validate_cim_tile_ir(ir)
+
+    assert "softmax attrs.axis must be 1 for the first MVP" in errors
+    assert "softmax input and output shapes must match" in errors
+
+
+def test_build_matmul_softmax_graph_ir_keeps_matmul_and_softmax_as_ir_ops():
+    ir = build_matmul_softmax_graph_ir(
+        m=1024,
+        n=1024,
+        k=128,
+        bm=64,
+        bn=64,
+        bk=64,
+        mesh_w=4,
+        mesh_h=5,
+        dtype="fp32",
+    )
+
+    assert validate_cim_tile_ir(ir) == []
+
+    payload = json.loads(to_json_text(ir))
+    assert payload["kernel"] == "graph"
+    assert [op["op"] for op in payload["ops"]] == ["matmul", "softmax"]
+    assert payload["ops"][0]["inputs"] == ["A", "B"]
+    assert payload["ops"][0]["outputs"] == ["S"]
+    assert payload["ops"][1]["inputs"] == ["S"]
+    assert payload["ops"][1]["outputs"] == ["P"]
+    assert payload["ops"][1]["attrs"] == {"axis": 1}

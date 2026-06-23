@@ -2,7 +2,9 @@ import json
 import subprocess
 import sys
 
-from tilelang_cim import build_gemm_ir
+import pytest
+
+from tilelang_cim import build_gemm_ir, build_matmul_softmax_graph_ir, build_softmax_ir
 from tilelang_cim.golem_exporter import (
     build_golem_env_text,
     build_golem_matmul_op_desc,
@@ -98,3 +100,29 @@ def test_export_golem_sst_cli_accepts_cim_tileir_json(tmp_path):
     resolved = json.loads((artifact_root / "contracts" / "matmul_op_desc_resolved.json").read_text(encoding="utf-8"))
     assert resolved["block_k"] == 64
     assert (artifact_root / "golem_sst.env").exists()
+
+
+def test_golem_exporter_rejects_softmax_without_touching_matmul_path():
+    with pytest.raises(ValueError, match="Golem backend supports only gemm kernels for the first exporter"):
+        build_golem_matmul_op_desc(build_softmax_ir(rows=64, cols=64, dtype="fp32"))
+
+    desc = build_golem_matmul_op_desc(_valid_golem_ir())
+    assert desc["m"] == 4096
+    assert desc["dtype"] == "fp32"
+
+
+def test_golem_exporter_rejects_graph_ir_until_hardware_runtime_supports_softmax():
+    ir = build_matmul_softmax_graph_ir(
+        m=4096,
+        n=128,
+        k=4096,
+        bm=64,
+        bn=64,
+        bk=64,
+        mesh_w=4,
+        mesh_h=5,
+        dtype="fp32",
+    )
+
+    with pytest.raises(ValueError, match="Golem backend supports only gemm kernels for the first exporter"):
+        build_golem_matmul_op_desc(ir)

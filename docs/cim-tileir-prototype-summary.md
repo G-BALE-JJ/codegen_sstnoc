@@ -19,7 +19,7 @@ TileLang 是第一个前端，Golem SST 是第一个真实硬件后端。toy arc
 当前项目仍处于编译器侧原型阶段，目标不是模拟抽象 CIM mesh，也不是生成 RISC-V ELF，而是验证并打磨以下链路：
 
 ```text
-TileLang GEMM / generated TileLang GEMM / static GEMM params
+TileLang GEMM / generated TileLang GEMM / static GEMM params / graph IR
     ↓
 CIM-TileIR JSON
     ↓
@@ -39,7 +39,9 @@ Golem SST env/contract artifacts
 已实现 `tilelang_cim` 原型包，支持：
 
 - `build_gemm_ir`：从静态 GEMM 参数生成 `CIM-TileIR` dict。
-- `validate_cim_tile_ir`：检查 mesh、tile、A/B/C tensor、mapping、program op 顺序和 `loop_k` body。
+- `build_softmax_ir`：构造 row-wise softmax IR，当前仅支持 `axis=1`。
+- `build_matmul_softmax_graph_ir`：构造 `matmul -> softmax` 两节点 graph IR。
+- `validate_cim_tile_ir`：检查 GEMM、softmax 和当前 graph MVP 的 IR 合法性。
 - `to_json_text` / `write_json`：导出稳定 JSON。
 
 对应文件：
@@ -50,6 +52,8 @@ Golem SST env/contract artifacts
 - `examples/gemm_ir.py`
 - `tests/test_cim_tile_ir.py`
 - `tests/test_gemm_ir_example.py`
+
+当前 softmax/graph 只在 IR 层表达和校验，不进入 Golem SST exporter。
 
 ### 2.2 TileLang GEMM extractor MVP
 
@@ -98,6 +102,8 @@ Golem SST env/contract artifacts
 - `examples/export_golem_sst.py`
 - `tests/test_golem_constraints.py`
 - `tests/test_golem_exporter.py`
+
+当前 Golem exporter 仍只接受 `kernel=gemm`。`kernel=softmax` 和 `kernel=graph` 会被明确拒绝，直到硬件侧具备 softmax runtime/contract 或 graph runtime。
 
 ### 2.4 硬件侧 env/contract 解耦审计
 
@@ -252,6 +258,9 @@ bash scripts/check_docs.sh
 
 当前原型不能回答以下问题：
 
+- softmax/graph 如何导出 Golem artifacts。
+- softmax 如何在真实 SST 中 execute。
+- graph runtime contract 应采用单文件 sequence 还是 `ops/*.json` 结构。
 - 多参数 sweep 后的性能趋势是什么。
 - 未校准预测模型能否可靠预测新 shape 的周期。
 - NoC 拥塞、memory queue 和 WCP strict-order consumption 在不同参数下的系统性规律是什么。
@@ -261,17 +270,21 @@ bash scripts/check_docs.sh
 
 当前 single-run report 已能解释一次真实运行的观测指标和派生指标，但不能外推为预测模型或参数优化结论。这些问题应通过后续多 run 数据、TileOPs 复杂模式支持和长期 runtime ABI/ELF 阶段继续推进。
 
-## 6. 当前收尾建议
+## 6. 下一阶段建议
 
-下一阶段不再恢复 toy architecture 或 abstract event planner。当前阶段 10 的短期收尾建议优先做：
+下一阶段不恢复 toy architecture 或 abstract event planner。优先推进 softmax/graph 的真实执行闭环：
 
 ```text
-TileLang extractor error UX and unsupported-mode boundaries
+matmul on Golem MVM array
+  -> logits in memory
+  -> softmax on RISC-V software path
+  -> output in memory
 ```
 
 最小目标：
 
-- 改进缺失 shared buffer、fragment buffer、`T.gemm`、静态 shape 时的错误信息。
-- 对转置 GEMM、复杂 fusion、grouped GEMM 继续给出明确 unsupported reason。
-- 保持真实 `TileOPs` 仓库只读；复杂 TileOPs 模式暂缓，不作为近期必要步骤。
-- 保持 single-run report 的定位：当前是性能报告 MVP，不引入 sweep、预测模型或多 run 聚合。
+- 在硬件侧新增 softmax CPU runtime path 和 verifier。
+- 设计 graph/softmax contract，避免复用 matmul-only contract。
+- 在 `codegen_sstnoc` 中新增 graph exporter 和 graph artifact validator。
+- 保持当前 GEMM exporter 路径不变。
+- 后续再评估 softmax 专用硬件 primitive，不作为第一步目标。

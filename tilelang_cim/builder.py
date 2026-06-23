@@ -75,5 +75,102 @@ def build_gemm_ir(
     }
 
 
+def build_softmax_ir(
+    *,
+    rows: int,
+    cols: int,
+    dtype: str = "fp32",
+    axis: int = 1,
+    input_name: str = "input",
+    output_name: str = "output",
+    mesh_w: int = 8,
+    mesh_h: int = 8,
+    layout: str = "row_major",
+) -> dict[str, Any]:
+    """Build a first MVP CIM-TileIR dictionary for row-wise softmax."""
+    return {
+        "kernel": "softmax",
+        "target": "riscv_cim_mesh",
+        "mode": "ir_only",
+        "mesh": {"w": mesh_w, "h": mesh_h},
+        "tensors": {
+            input_name: {
+                "shape": [rows, cols],
+                "dtype": dtype,
+                "layout": layout,
+                "addr": f"{input_name}_base",
+            },
+            output_name: {
+                "shape": [rows, cols],
+                "dtype": dtype,
+                "layout": layout,
+                "addr": f"{output_name}_base",
+            },
+        },
+        "attrs": {"axis": axis},
+        "program": [
+            {"op": "row_max", "input": input_name, "output": "row_max"},
+            {"op": "subtract", "lhs": input_name, "rhs": "row_max", "output": "shifted"},
+            {"op": "exp", "input": "shifted", "output": "exp"},
+            {"op": "row_sum", "input": "exp", "output": "row_sum"},
+            {"op": "divide", "lhs": "exp", "rhs": "row_sum", "output": output_name},
+            {"op": "store", "src": output_name, "tensor": output_name},
+        ],
+    }
+
+
+def build_matmul_softmax_graph_ir(
+    *,
+    m: int,
+    n: int,
+    k: int,
+    bm: int,
+    bn: int,
+    bk: int,
+    mesh_w: int = 8,
+    mesh_h: int = 8,
+    pipeline_stages: int = 1,
+    dtype: str = "fp32",
+    layout: str = "row_major",
+) -> dict[str, Any]:
+    """Build a graph-shaped IR for GEMM followed by row-wise softmax."""
+    if pipeline_stages not in (1, 2):
+        raise ValueError("pipeline_stages must be 1 or 2")
+
+    return {
+        "kernel": "graph",
+        "target": "riscv_cim_mesh",
+        "mode": "ir_only",
+        "mesh": {"w": mesh_w, "h": mesh_h},
+        "tensors": {
+            "A": {"shape": [m, k], "dtype": dtype, "layout": layout, "addr": "A_base"},
+            "B": {"shape": [k, n], "dtype": dtype, "layout": layout, "addr": "B_base"},
+            "S": {"shape": [m, n], "dtype": dtype, "layout": layout, "addr": "S_base"},
+            "P": {"shape": [m, n], "dtype": dtype, "layout": layout, "addr": "P_base"},
+        },
+        "ops": [
+            {
+                "id": "matmul_0",
+                "op": "matmul",
+                "inputs": ["A", "B"],
+                "outputs": ["S"],
+                "tile": {"BM": bm, "BN": bn, "BK": bk},
+                "attrs": {
+                    "transpose_a": False,
+                    "transpose_b": False,
+                    "pipeline_stages": pipeline_stages,
+                },
+            },
+            {
+                "id": "softmax_0",
+                "op": "softmax",
+                "inputs": ["S"],
+                "outputs": ["P"],
+                "attrs": {"axis": 1},
+            },
+        ],
+    }
+
+
 def _ceildiv(lhs: int, rhs: int) -> int:
     return -(-lhs // rhs)

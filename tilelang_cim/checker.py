@@ -9,6 +9,18 @@ def validate_cim_tile_ir(ir: dict[str, Any]) -> list[str]:
 
     _check_positive_int(ir, ["mesh", "w"], "mesh.w", errors)
     _check_positive_int(ir, ["mesh", "h"], "mesh.h", errors)
+
+    kernel = ir.get("kernel")
+    if kernel == "softmax":
+        _check_softmax_ir(ir, errors)
+        return errors
+    if kernel == "graph":
+        _check_graph_ir(ir, errors)
+        return errors
+    if kernel not in (None, "gemm"):
+        errors.append("kernel must be gemm, softmax, or graph")
+        return errors
+
     _check_positive_int(ir, ["tile", "BM"], "tile.BM", errors)
     _check_positive_int(ir, ["tile", "BN"], "tile.BN", errors)
     _check_positive_int(ir, ["tile", "BK"], "tile.BK", errors)
@@ -145,3 +157,131 @@ def _check_loop_k(loop_op: dict[str, Any], errors: list[str]) -> None:
 
 def _is_2d_shape(value: Any) -> bool:
     return isinstance(value, list) and len(value) == 2 and all(isinstance(dim, int) and dim > 0 for dim in value)
+
+
+def _check_softmax_ir(ir: dict[str, Any], errors: list[str]) -> None:
+    tensors = ir.get("tensors")
+    if not isinstance(tensors, dict):
+        errors.append("tensors must be an object")
+        return
+
+    tensor_names = list(tensors)
+    if len(tensor_names) != 2:
+        errors.append("softmax must define exactly one input tensor and one output tensor")
+        return
+
+    input_tensor = tensors[tensor_names[0]]
+    output_tensor = tensors[tensor_names[1]]
+    if not isinstance(input_tensor, dict) or not isinstance(output_tensor, dict):
+        errors.append("softmax input and output tensors must be objects")
+        return
+
+    input_shape = input_tensor.get("shape")
+    output_shape = output_tensor.get("shape")
+    if not _is_2d_shape(input_shape) or not _is_2d_shape(output_shape):
+        errors.append("softmax input and output shapes must be 2D integer lists")
+    elif input_shape != output_shape:
+        errors.append("softmax input and output shapes must match")
+
+    if input_tensor.get("dtype") != output_tensor.get("dtype"):
+        errors.append("softmax input and output dtypes must match")
+
+    for name, tensor in zip(tensor_names, (input_tensor, output_tensor)):
+        if tensor.get("layout") != "row_major":
+            errors.append(f"tensors.{name}.layout must be row_major")
+
+    attrs = ir.get("attrs")
+    if not isinstance(attrs, dict):
+        errors.append("attrs must be an object")
+    elif attrs.get("axis") != 1:
+        errors.append("softmax attrs.axis must be 1 for the first MVP")
+
+    program = ir.get("program")
+    if not isinstance(program, list):
+        errors.append("program must be a list")
+        return
+    op_names = [op.get("op") for op in program if isinstance(op, dict)]
+    if op_names != ["row_max", "subtract", "exp", "row_sum", "divide", "store"]:
+        errors.append("softmax program must contain row_max, subtract, exp, row_sum, divide, store in order")
+
+
+def _check_graph_ir(ir: dict[str, Any], errors: list[str]) -> None:
+    tensors = ir.get("tensors")
+    if not isinstance(tensors, dict):
+        errors.append("tensors must be an object")
+        return
+
+    for name in ("A", "B", "S", "P"):
+        tensor = tensors.get(name)
+        if not isinstance(tensor, dict):
+            errors.append(f"tensors.{name} is required")
+            continue
+        if not _is_2d_shape(tensor.get("shape")):
+            errors.append(f"tensors.{name}.shape must be a 2D integer list")
+        if tensor.get("layout") != "row_major":
+            errors.append(f"tensors.{name}.layout must be row_major")
+
+    if all(isinstance(tensors.get(name), dict) for name in ("A", "B", "S", "P")):
+        a_shape = tensors["A"].get("shape")
+        b_shape = tensors["B"].get("shape")
+        s_shape = tensors["S"].get("shape")
+        p_shape = tensors["P"].get("shape")
+        if _is_2d_shape(a_shape) and _is_2d_shape(b_shape) and _is_2d_shape(s_shape) and _is_2d_shape(p_shape):
+            m, k = a_shape
+            b_k, n = b_shape
+            if k != b_k:
+                errors.append("A.K must match B.K")
+            if s_shape != [m, n]:
+                errors.append("S shape must be [A.M, B.N]")
+            if p_shape != s_shape:
+                errors.append("P shape must match S shape")
+
+    ops = ir.get("ops")
+    if not isinstance(ops, list) or len(ops) != 2:
+        errors.append("graph must contain exactly matmul and softmax ops for the first MVP")
+        return
+    op_names = [op.get("op") for op in ops if isinstance(op, dict)]
+    if op_names != ["matmul", "softmax"]:
+        errors.append("graph ops must be matmul, softmax in order for the first MVP")
+        return
+
+    matmul_op, softmax_op = ops
+    if matmul_op.get("inputs") != ["A", "B"] or matmul_op.get("outputs") != ["S"]:
+        errors.append("graph matmul op must consume A/B and produce S")
+    if softmax_op.get("inputs") != ["S"] or softmax_op.get("outputs") != ["P"]:
+        errors.append("graph softmax op must consume S and produce P")
+
+    tile = matmul_op.get("tile")
+    if not isinstance(tile, dict):
+        errors.append("graph matmul op tile must be an object")
+    else:
+        for key in ("BM", "BN", "BK"):
+            value = tile.get(key)
+            if not isinstance(value, int) or value <= 0:
+                errors.append(f"graph matmul tile.{key} must be a positive integer")
+        a_shape = tensors.get("A", {}).get("shape") if isinstance(tensors.get("A"), dict) else None
+        b_shape = tensors.get("B", {}).get("shape") if isinstance(tensors.get("B"), dict) else None
+        if _is_2d_shape(a_shape) and _is_2d_shape(b_shape):
+            if isinstance(tile.get("BM"), int) and tile["BM"] > 0 and a_shape[0] % tile["BM"] != 0:
+                errors.append("M must be divisible by graph matmul tile.BM for the first MVP")
+            if isinstance(tile.get("BN"), int) and tile["BN"] > 0 and b_shape[1] % tile["BN"] != 0:
+                errors.append("N must be divisible by graph matmul tile.BN for the first MVP")
+            if isinstance(tile.get("BK"), int) and tile["BK"] > 0 and a_shape[1] % tile["BK"] != 0:
+                errors.append("K must be divisible by graph matmul tile.BK for the first MVP")
+
+    matmul_attrs = matmul_op.get("attrs")
+    if not isinstance(matmul_attrs, dict):
+        errors.append("graph matmul attrs must be an object")
+    else:
+        if matmul_attrs.get("transpose_a") is not False:
+            errors.append("graph matmul attrs.transpose_a must be false for the first MVP")
+        if matmul_attrs.get("transpose_b") is not False:
+            errors.append("graph matmul attrs.transpose_b must be false for the first MVP")
+        if matmul_attrs.get("pipeline_stages") not in (1, 2):
+            errors.append("graph matmul attrs.pipeline_stages must be 1 or 2")
+
+    softmax_attrs = softmax_op.get("attrs")
+    if not isinstance(softmax_attrs, dict):
+        errors.append("graph softmax attrs must be an object")
+    elif softmax_attrs.get("axis") != 1:
+        errors.append("graph softmax attrs.axis must be 1 for the first MVP")
