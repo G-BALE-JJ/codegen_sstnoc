@@ -109,18 +109,32 @@ Golem exporter 当前输出：
 
 在硬件侧 micro-tiling 未完成前，exporter 不应放宽 `BM/BK` 为硬件 tile 的整数倍。
 
-## Softmax 下一阶段
+## Softmax / Graph 当前阶段
 
 当前 `CIM-TileIR` 已可表达：
 
 - `kernel=softmax` 的 row-wise softmax。
 - `kernel=graph` 的 `matmul -> softmax` 两节点 graph。
 
+当前已支持：
+
+- `kernel=graph` 的 `matmul -> softmax(cpu_fallback)` Golem artifacts。
+- `graph_sequence_v1.json`、`softmax_op_desc_resolved.json` 和 `graph_env_mapping_v1.json`。
+- TileOps `SoftmaxFwdOp(N=N, dtype=dtype, dim=-1)` 的 single-N-tile 子集：
+  `fp32`、二维 row-major、`N == block_n`。
+- `examples/run_golem_softmax_sst_smoke.sh` 读取 graph artifacts 并调用硬件侧
+  `small/mvm_noc_softmax_cpu/run_noc_dma_softmax_pipeline.sh`。默认 dry-run，`--execute`
+  时启用真实 SST 与 `--verify-softmax`。
+- `examples/run_tilelang_softmax_golem_e2e.sh` 提供和 GEMM E2E 对齐的 softmax graph 入口：
+  TileOps-like `matmul -> SoftmaxFwdOp` source 先提取为 `CIM-TileIR graph`，再导出 artifacts 并进入
+  softmax SST wrapper。
+
 当前尚未支持：
 
-- softmax/graph 导出 Golem artifacts。
-- softmax 真实 SST execute。
-- graph runtime contract。
+- 独立 `kernel=softmax` 导出 Golem artifacts。
+- softmax graph 的 single-run stats report 聚合入口。
+- TileOps single-tile primitive 形式 `T.reduce_max -> T.exp -> T.reduce_sum -> normalize` 的 extractor。
+- TileOps multi-tile online softmax，即 `N > block_n` 的完整 row-wise softmax。
 
 推荐下一步采用低风险执行策略：
 
@@ -131,32 +145,21 @@ matmul on Golem MVM array
   -> write probability output
 ```
 
-这需要在 `RISC-V-CIM-Manycore-SST` 侧新增 softmax runtime/contract 或新增 graph runner，但不需要第一步就修改 Golem array 或新增 softmax 硬件 primitive。
-
-建议新增 contract 方向：
-
-```text
-contracts/
-  graph_op_desc_resolved.json
-  ops/
-    000_matmul.json
-    001_softmax.json
-```
-
-或先做更小版本：
+当前已采用更小版本 contract：
 
 ```text
 contracts/
   matmul_op_desc_resolved.json
   softmax_op_desc_resolved.json
   graph_sequence_v1.json
+  graph_env_mapping_v1.json
 ```
 
 ## 当前不做
 
 - 不直接生成 RISC-V ELF。
 - 不把 TileLang 直接写成 `GOLEM_*`。
-- 不让 softmax/graph 误走当前 matmul exporter。
+- 不把 `N > block_n` 的 TileOps multi-tile softmax 误导出为当前 tile-local fallback。
 - 不做 sweep、多 run 聚合或自动调参。
 - 不在 micro-tiling 未完成前放宽 Golem tile shape。
 - 不修改 `TileOPs`。

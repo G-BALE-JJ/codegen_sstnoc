@@ -1,4 +1,4 @@
-from tilelang_cim import build_gemm_ir
+from tilelang_cim import build_gemm_ir, build_matmul_softmax_graph_ir
 from tilelang_cim.golem_constraints import GolemBackendConfig, validate_cim_tile_ir_for_golem
 
 
@@ -63,3 +63,42 @@ def test_validate_cim_tile_ir_for_golem_accepts_custom_backend_config():
     )
 
     assert errors == []
+
+
+def test_validate_cim_tile_ir_for_golem_accepts_single_n_tile_matmul_softmax_graph():
+    ir = build_matmul_softmax_graph_ir(
+        m=64,
+        n=64,
+        k=64,
+        bm=64,
+        bn=64,
+        bk=64,
+        mesh_w=1,
+        mesh_h=1,
+        dtype="fp32",
+    )
+
+    errors = validate_cim_tile_ir_for_golem(ir, GolemBackendConfig(total_groups=1, total_gemm_cores=1))
+
+    assert errors == []
+
+
+def test_validate_cim_tile_ir_for_golem_rejects_multi_n_tile_softmax_graph():
+    ir = build_matmul_softmax_graph_ir(
+        m=64,
+        n=128,
+        k=64,
+        bm=64,
+        bn=64,
+        bk=64,
+        mesh_w=1,
+        mesh_h=2,
+        dtype="fp32",
+    )
+
+    errors = validate_cim_tile_ir_for_golem(ir)
+
+    assert (
+        "Golem softmax CPU fallback requires graph N == matmul tile.BN; "
+        "multi-N-tile row-wise softmax is not supported"
+    ) in errors

@@ -8,6 +8,7 @@ from tilelang_cim import build_gemm_ir, build_matmul_softmax_graph_ir, build_sof
 from tilelang_cim.golem_exporter import (
     build_golem_env_text,
     build_golem_matmul_op_desc,
+    build_golem_softmax_op_desc_from_graph,
     export_golem_sst_artifacts,
 )
 from tilelang_cim.golem_constraints import GolemBackendConfig
@@ -111,18 +112,68 @@ def test_golem_exporter_rejects_softmax_without_touching_matmul_path():
     assert desc["dtype"] == "fp32"
 
 
-def test_golem_exporter_rejects_graph_ir_until_hardware_runtime_supports_softmax():
+def test_build_golem_softmax_op_desc_from_matmul_softmax_graph_uses_tileops_subset():
     ir = build_matmul_softmax_graph_ir(
-        m=4096,
-        n=128,
-        k=4096,
+        m=64,
+        n=64,
+        k=64,
         bm=64,
         bn=64,
         bk=64,
-        mesh_w=4,
-        mesh_h=5,
+        mesh_w=1,
+        mesh_h=1,
         dtype="fp32",
     )
 
-    with pytest.raises(ValueError, match="Golem backend supports only gemm kernels for the first exporter"):
-        build_golem_matmul_op_desc(ir)
+    desc = build_golem_softmax_op_desc_from_graph(ir)
+
+    assert desc == {
+        "op": "softmax",
+        "op_name": "SoftmaxFwdOp",
+        "semantic_source": "TileOps SoftmaxFwdOp",
+        "input": "S",
+        "output": "P",
+        "N": 64,
+        "dim": -1,
+        "axis": 1,
+        "outer": 64,
+        "dtype": "fp32",
+        "layout": "row_major",
+        "backend": "riscv_cpu_fallback",
+        "scope": "tile_local",
+        "supported_subset": "single_n_tile_rowwise",
+        "requires_single_n_tile": True,
+        "tile_local_equivalent_to_rowwise": True,
+        "in_place_runtime": True,
+    }
+
+
+def test_export_golem_sst_artifacts_writes_matmul_softmax_graph_contracts(tmp_path):
+    ir = build_matmul_softmax_graph_ir(
+        m=64,
+        n=64,
+        k=64,
+        bm=64,
+        bn=64,
+        bk=64,
+        mesh_w=1,
+        mesh_h=1,
+        dtype="fp32",
+    )
+
+    paths = export_golem_sst_artifacts(ir, tmp_path, GolemBackendConfig(total_groups=1, total_gemm_cores=1))
+
+    assert paths["env"] == tmp_path / "golem_sst.env"
+    assert paths["resolved_contract"] == tmp_path / "contracts" / "matmul_op_desc_resolved.json"
+    assert paths["graph_sequence"] == tmp_path / "contracts" / "graph_sequence_v1.json"
+    assert paths["softmax_contract"] == tmp_path / "contracts" / "softmax_op_desc_resolved.json"
+
+    sequence = json.loads(paths["graph_sequence"].read_text(encoding="utf-8"))
+    softmax = json.loads(paths["softmax_contract"].read_text(encoding="utf-8"))
+
+    assert sequence["kind"] == "matmul_softmax"
+    assert [item["op"] for item in sequence["execution"]] == ["matmul", "softmax"]
+    assert sequence["execution"][1]["backend"] == "riscv_cpu_fallback"
+    assert softmax["op_name"] == "SoftmaxFwdOp"
+    assert softmax["requires_single_n_tile"] is True
+    assert softmax["N"] == 64

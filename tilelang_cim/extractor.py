@@ -6,7 +6,7 @@ import textwrap
 from dataclasses import dataclass
 from typing import Any
 
-from .builder import build_gemm_ir
+from .builder import build_gemm_ir, build_matmul_softmax_graph_ir
 from .checker import validate_cim_tile_ir
 
 
@@ -127,6 +127,62 @@ def extract_gemm_ir_from_source(
     return ir
 
 
+def extract_matmul_softmax_graph_ir_from_source(
+    source: str,
+    *,
+    mesh_w: int = 8,
+    mesh_h: int = 8,
+) -> dict[str, Any]:
+    """Extract a narrow TileOps-like matmul -> SoftmaxFwdOp source into graph CIM-TileIR."""
+    tree = ast.parse(textwrap.dedent(source))
+    functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    if not functions:
+        raise ValueError("No function definition was found")
+
+    func = _select_tilelang_function(functions)
+    symbols = _collect_static_symbols(tree, func)
+    tensors = _collect_tensors(func, symbols)
+    tensors.update(_collect_match_buffers(func, symbols))
+    _require_gemm_call(func)
+
+    softmax_spec = _find_softmax_fwd_spec(tree, symbols)
+    shared_shapes = _collect_alloc_shapes(func, "alloc_shared", symbols)
+    shared_shapes.extend(_collect_scoped_alloc_buffers(func, "shared", symbols))
+    fragment_shapes = _collect_alloc_shapes(func, "alloc_fragment", symbols)
+    fragment_shapes.extend(_collect_scoped_alloc_buffers(func, "local.fragment", symbols))
+    pipeline = _find_pipeline(func, symbols)
+
+    a_shape, b_shape, s_shape, p_shape = _infer_graph_tensor_roles(tensors)
+    bm, bn = _infer_output_tile(fragment_shapes, shared_shapes)
+    bk = _infer_k_tile(shared_shapes, pipeline)
+
+    if softmax_spec.dim != -1:
+        raise ValueError("SoftmaxFwdOp dim must be -1 for the first graph extractor MVP")
+    if softmax_spec.n != bn:
+        raise ValueError("SoftmaxFwdOp N must equal graph matmul tile BN for single-N-tile fallback")
+    if softmax_spec.dtype != s_shape.dtype:
+        raise ValueError("SoftmaxFwdOp dtype must match matmul output dtype")
+    if s_shape.shape != p_shape.shape:
+        raise ValueError("Softmax input/output tensor shapes must match")
+
+    ir = build_matmul_softmax_graph_ir(
+        m=a_shape.shape[0],
+        n=b_shape.shape[1],
+        k=a_shape.shape[1],
+        bm=bm,
+        bn=bn,
+        bk=bk,
+        mesh_w=mesh_w,
+        mesh_h=mesh_h,
+        pipeline_stages=pipeline.num_stages,
+        dtype=s_shape.dtype,
+    )
+    errors = validate_cim_tile_ir(ir)
+    if errors:
+        raise ValueError("Extracted invalid CIM-TileIR graph:\n" + "\n".join(f"- {error}" for error in errors))
+    return ir
+
+
 @dataclass(frozen=True)
 class _TensorSpec:
     shape: tuple[int, int]
@@ -137,6 +193,13 @@ class _TensorSpec:
 class _PipelineSpec:
     count: int
     num_stages: int
+
+
+@dataclass(frozen=True)
+class _SoftmaxFwdSpec:
+    n: int
+    dtype: str
+    dim: int
 
 
 def _iter_tir_prim_funcs(func_or_mod: Any) -> list[Any]:
@@ -309,6 +372,71 @@ def _infer_gemm_tensor_roles(tensors: dict[str, _TensorSpec]) -> tuple[_TensorSp
     if len(candidates) > 1:
         raise ValueError("Unable to infer unique A/B/C tensor roles from GEMM tensor shapes")
     raise ValueError("A/B/C tensor annotations are required or must form A(M,K), B(K,N), C(M,N)")
+
+
+def _infer_graph_tensor_roles(
+    tensors: dict[str, _TensorSpec],
+) -> tuple[_TensorSpec, _TensorSpec, _TensorSpec, _TensorSpec]:
+    named_roles = (
+        tensors.get("A") or tensors.get("a"),
+        tensors.get("B") or tensors.get("b"),
+        tensors.get("S") or tensors.get("s"),
+        tensors.get("P") or tensors.get("p"),
+    )
+    if all(role is not None for role in named_roles):
+        return named_roles  # type: ignore[return-value]
+
+    candidates: list[tuple[_TensorSpec, _TensorSpec, _TensorSpec, _TensorSpec]] = []
+    tensor_specs = list(tensors.values())
+    for a_candidate in tensor_specs:
+        m, k = a_candidate.shape
+        for b_candidate in tensor_specs:
+            if b_candidate is a_candidate or b_candidate.shape[0] != k:
+                continue
+            n = b_candidate.shape[1]
+            outputs = [
+                tensor
+                for tensor in tensor_specs
+                if tensor is not a_candidate and tensor is not b_candidate and tensor.shape == (m, n)
+            ]
+            if len(outputs) == 2:
+                candidates.append((a_candidate, b_candidate, outputs[0], outputs[1]))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise ValueError("Unable to infer unique A/B/S/P tensor roles from matmul->softmax tensor shapes")
+    raise ValueError("A/B/S/P tensor annotations are required or must form A(M,K), B(K,N), S/P(M,N)")
+
+
+def _find_softmax_fwd_spec(tree: ast.Module, symbols: dict[str, StaticSymbol]) -> _SoftmaxFwdSpec:
+    specs: list[_SoftmaxFwdSpec] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not _call_name_matches(node.func, "SoftmaxFwdOp"):
+            continue
+        values: dict[str, ast.AST] = {}
+        positional = ("N", "dtype", "dim")
+        for index, arg in enumerate(node.args[: len(positional)]):
+            values[positional[index]] = arg
+        for keyword in node.keywords:
+            if keyword.arg in positional:
+                values[keyword.arg] = keyword.value
+        if not all(name in values for name in positional):
+            raise ValueError("SoftmaxFwdOp requires N, dtype, and dim for graph extraction")
+        n = _eval_int(values["N"], symbols)
+        dtype = _eval_dtype(values["dtype"], symbols)
+        dim = _eval_int(values["dim"], symbols)
+        if n is None or dtype is None or dim is None:
+            raise ValueError("SoftmaxFwdOp N, dtype, and dim must be static")
+        specs.append(_SoftmaxFwdSpec(n=n, dtype=dtype, dim=dim))
+
+    if not specs:
+        raise ValueError("SoftmaxFwdOp call was not found")
+    if len(specs) > 1:
+        raise ValueError("Expected one SoftmaxFwdOp call for the first graph extractor MVP")
+    return specs[0]
 
 
 def _select_tilelang_function(functions: list[ast.FunctionDef | ast.AsyncFunctionDef]) -> ast.FunctionDef | ast.AsyncFunctionDef:
@@ -595,3 +723,11 @@ def _is_t_attr_call(node: ast.AST, attr_name: str) -> bool:
 
 def _is_t_attr(node: ast.AST, attr_name: str) -> bool:
     return isinstance(node, ast.Attribute) and node.attr == attr_name
+
+
+def _call_name_matches(node: ast.AST, name: str) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == name
+    if isinstance(node, ast.Attribute):
+        return node.attr == name
+    return False

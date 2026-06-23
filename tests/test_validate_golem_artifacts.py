@@ -2,7 +2,7 @@ import json
 import subprocess
 import sys
 
-from tilelang_cim import build_gemm_ir
+from tilelang_cim import build_gemm_ir, build_matmul_softmax_graph_ir
 from tilelang_cim.golem_exporter import export_golem_sst_artifacts
 from scripts.validate_golem_artifacts import validate_golem_artifacts
 
@@ -80,3 +80,26 @@ def test_validate_golem_artifacts_cli_writes_report_json(tmp_path):
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["ok"] is True
     assert report["checks"]["env_mapping_contract"] == "ok"
+
+
+def test_validate_golem_artifacts_accepts_matmul_softmax_graph_output(tmp_path):
+    ir = build_matmul_softmax_graph_ir(
+        m=64,
+        n=64,
+        k=64,
+        bm=64,
+        bn=64,
+        bk=64,
+        mesh_w=1,
+        mesh_h=1,
+        dtype="fp32",
+    )
+    export_golem_sst_artifacts(ir, tmp_path)
+
+    report = validate_golem_artifacts(tmp_path)
+
+    assert report["ok"] is True
+    assert report["graph_sequence"]["kind"] == "matmul_softmax"
+    assert report["softmax_contract"]["op_name"] == "SoftmaxFwdOp"
+    assert report["checks"]["graph_required_files"] == "ok"
+    assert report["checks"]["softmax_contract_schema"] == "ok"

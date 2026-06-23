@@ -50,10 +50,12 @@ Golem SST env/contract artifacts
 - `tilelang_cim/checker.py`
 - `tilelang_cim/json_export.py`
 - `examples/gemm_ir.py`
+- `examples/matmul_softmax_ir.py`
 - `tests/test_cim_tile_ir.py`
 - `tests/test_gemm_ir_example.py`
 
-当前 softmax/graph 只在 IR 层表达和校验，不进入 Golem SST exporter。
+当前独立 `kernel=softmax` 仍只在 IR 层表达和校验；`kernel=graph` 的
+`matmul -> softmax(cpu_fallback)` single-N-tile 子集已可进入 Golem SST exporter。
 
 ### 2.2 TileLang GEMM extractor MVP
 
@@ -103,7 +105,10 @@ Golem SST env/contract artifacts
 - `tests/test_golem_constraints.py`
 - `tests/test_golem_exporter.py`
 
-当前 Golem exporter 仍只接受 `kernel=gemm`。`kernel=softmax` 和 `kernel=graph` 会被明确拒绝，直到硬件侧具备 softmax runtime/contract 或 graph runtime。
+当前 Golem exporter 支持 `kernel=gemm`，也支持 `kernel=graph` 的
+`matmul -> softmax(cpu_fallback)` single-N-tile 子集。`kernel=softmax` 独立执行仍会被明确拒绝。
+graph softmax 当前只对齐 TileOps `SoftmaxFwdOp(N=N, dtype=dtype, dim=-1)` 的二维 fp32
+row-major 子集，并要求 `N == block_n`，不支持 TileOps multi-tile online softmax。
 
 ### 2.4 硬件侧 env/contract 解耦审计
 
@@ -258,9 +263,9 @@ bash scripts/check_docs.sh
 
 当前原型不能回答以下问题：
 
-- softmax/graph 如何导出 Golem artifacts。
-- softmax 如何在真实 SST 中 execute。
-- graph runtime contract 应采用单文件 sequence 还是 `ops/*.json` 结构。
+- 独立 softmax 如何导出 Golem artifacts。
+- codegen wrapper 如何自动调用硬件侧 softmax SST pipeline。
+- TileOps multi-tile online softmax 如何映射到 Golem 跨 tile row_max / row_sum 聚合。
 - 多参数 sweep 后的性能趋势是什么。
 - 未校准预测模型能否可靠预测新 shape 的周期。
 - NoC 拥塞、memory queue 和 WCP strict-order consumption 在不同参数下的系统性规律是什么。
@@ -283,8 +288,12 @@ matmul on Golem MVM array
 
 最小目标：
 
-- 在硬件侧新增 softmax CPU runtime path 和 verifier。
-- 设计 graph/softmax contract，避免复用 matmul-only contract。
-- 在 `codegen_sstnoc` 中新增 graph exporter 和 graph artifact validator。
-- 保持当前 GEMM exporter 路径不变。
+- Stage 10B 已新增 codegen wrapper：`examples/run_golem_softmax_sst_smoke.sh`。
+- 该 wrapper 读取 graph artifacts 并调用硬件侧
+  `mvm_noc_softmax_cpu/run_noc_dma_softmax_pipeline.sh`。
+- dry-run 模式已对齐 1-core / 1-tile softmax smoke，execute 模式可复用用户 shell 环境运行真实 SST，
+  并启用 `--verify-softmax`。
+- Stage 10C 已新增 `examples/run_tilelang_softmax_golem_e2e.sh`，支持 TileOps-like
+  `matmul -> SoftmaxFwdOp` source 经 `CIM-TileIR graph` 进入 Golem graph artifacts 和 softmax SST wrapper。
+- 后续再扩展 TileLang single-tile primitive softmax fixture 的 extractor 入口。
 - 后续再评估 softmax 专用硬件 primitive，不作为第一步目标。
